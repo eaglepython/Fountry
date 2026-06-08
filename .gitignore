@@ -1,0 +1,23 @@
+# Git — ignore generated files
+node_modules/
+dist/
+backend/cache/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.env
+backend/.venv/
+.env
+.env.local
+*.pyc
+__pycache__/
+
+# Source reference folders (already integrated into backend/)
+fgttt/
+fountryhh/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp agent state
+/tmp/
