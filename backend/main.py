@@ -365,6 +365,25 @@ async def run_execution_cycle(background_tasks: BackgroundTasks):
     return {"status": "started", "message": "Rebalance cycle triggered"}
 
 
+@app.post("/api/agents/execution/mode/{mode}")
+async def switch_alpaca_mode(mode: str):
+    """Switch Alpaca between 'live' and 'paper' trading without restart."""
+    if not execution_agent:
+        raise HTTPException(503, "Execution agent not ready")
+    if mode not in ("live", "paper"):
+        raise HTTPException(400, "mode must be 'live' or 'paper'")
+    if execution_agent.is_running:
+        raise HTTPException(409, "Cannot switch mode while a cycle is running")
+    execution_agent.alpaca.switch(mode)
+    log.info(f"Trading mode switched to {mode.upper()} → {execution_agent.alpaca.base_url}")
+    return {
+        "status":       "ok",
+        "alpaca_mode":  execution_agent.alpaca.mode,
+        "alpaca_url":   execution_agent.alpaca.base_url,
+        "message":      f"Switched to {mode.upper()} trading",
+    }
+
+
 @app.get("/api/agents/execution/positions")
 async def get_positions():
     """Current open positions in the paper portfolio."""

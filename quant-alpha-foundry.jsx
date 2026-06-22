@@ -982,6 +982,8 @@ const CSS = `
 function AgentsDashboard({ agentData, apiBase }) {
   const [runningJob, setRunningJob] = useState(null);
   const [localAgent, setLocalAgent] = useState(agentData);
+  const [switchingMode, setSwitchingMode] = useState(false);
+  const [modeSwitchMsg, setModeSwitchMsg] = useState(null);
 
   // Sync prop changes
   useEffect(() => { setLocalAgent(agentData); }, [agentData]);
@@ -989,6 +991,34 @@ function AgentsDashboard({ agentData, apiBase }) {
   const exec      = localAgent?.execution;
   const sched     = localAgent?.scheduler;
   const commentary = localAgent?.commentary;
+
+  // Current mode derived from backend state
+  const currentMode = exec?.alpaca_mode === "PAPER" ? "paper" : "live";
+
+  const switchMode = async (newMode) => {
+    if (switchingMode) return;
+    setSwitchingMode(true);
+    setModeSwitchMsg(null);
+    try {
+      const r = await fetch(`${apiBase}/api/agents/execution/mode/${newMode}`, { method: "POST" });
+      const data = await r.json();
+      if (r.ok) {
+        setModeSwitchMsg({ ok: true, text: `Switched to ${newMode.toUpperCase()} trading` });
+        // Refresh agent state
+        const s = await fetch(`${apiBase}/api/agents/execution/state`);
+        if (s.ok) {
+          const state = await s.json();
+          setLocalAgent(prev => ({ ...prev, execution: state }));
+        }
+      } else {
+        setModeSwitchMsg({ ok: false, text: data.detail || "Switch failed" });
+      }
+    } catch (e) {
+      setModeSwitchMsg({ ok: false, text: "Backend unreachable" });
+    }
+    setSwitchingMode(false);
+    setTimeout(() => setModeSwitchMsg(null), 4000);
+  };
 
   const triggerJob = async (jobId) => {
     setRunningJob(jobId);
@@ -1098,6 +1128,96 @@ function AgentsDashboard({ agentData, apiBase }) {
           <div style={{ display: "flex", gap: 8 }}>
             <BtnRun label="RUN CYCLE" onClick={triggerExecution} active={runningJob === "execution"} />
           </div>
+
+          {/* ── Trading Mode Toggle ── */}
+          {exec?.alpaca_enabled && (
+            <div style={{ marginTop: 16, padding: "14px 16px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(201,169,110,0.12)", borderRadius: 4 }}>
+              <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, color: "rgba(232,224,208,0.4)", letterSpacing: "0.12em", marginBottom: 10 }}>TRADING MODE</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                {/* PAPER label */}
+                <span style={{
+                  fontFamily: "JetBrains Mono, monospace", fontSize: 11,
+                  color: currentMode === "paper" ? "#4ade80" : "rgba(232,224,208,0.3)",
+                  fontWeight: currentMode === "paper" ? "bold" : "normal",
+                  transition: "color 0.3s",
+                }}>PAPER</span>
+
+                {/* Toggle pill */}
+                <div
+                  onClick={() => !switchingMode && switchMode(currentMode === "live" ? "paper" : "live")}
+                  style={{
+                    position: "relative", width: 44, height: 22, borderRadius: 11,
+                    background: currentMode === "live"
+                      ? "rgba(248,113,113,0.25)"
+                      : "rgba(74,222,128,0.2)",
+                    border: `1px solid ${currentMode === "live" ? "rgba(248,113,113,0.5)" : "rgba(74,222,128,0.4)"}`,
+                    cursor: switchingMode ? "wait" : "pointer",
+                    transition: "background 0.3s, border-color 0.3s",
+                  }}
+                >
+                  <div style={{
+                    position: "absolute", top: 2,
+                    left: currentMode === "live" ? 22 : 2,
+                    width: 16, height: 16, borderRadius: "50%",
+                    background: currentMode === "live" ? "#f87171" : "#4ade80",
+                    transition: "left 0.25s ease, background 0.3s",
+                    boxShadow: `0 0 6px ${currentMode === "live" ? "rgba(248,113,113,0.6)" : "rgba(74,222,128,0.6)"}`,
+                  }} />
+                </div>
+
+                {/* LIVE label */}
+                <span style={{
+                  fontFamily: "JetBrains Mono, monospace", fontSize: 11,
+                  color: currentMode === "live" ? "#f87171" : "rgba(232,224,208,0.3)",
+                  fontWeight: currentMode === "live" ? "bold" : "normal",
+                  transition: "color 0.3s",
+                }}>LIVE</span>
+
+                {/* Status badge */}
+                <span style={{
+                  fontFamily: "JetBrains Mono, monospace", fontSize: 9,
+                  padding: "3px 8px", borderRadius: 2,
+                  background: currentMode === "live" ? "rgba(248,113,113,0.1)" : "rgba(74,222,128,0.1)",
+                  border: `1px solid ${currentMode === "live" ? "rgba(248,113,113,0.3)" : "rgba(74,222,128,0.3)"}`,
+                  color: currentMode === "live" ? "#f87171" : "#4ade80",
+                  letterSpacing: "0.1em",
+                }}>
+                  {switchingMode ? "SWITCHING…" : currentMode === "live" ? "⚠ REAL MONEY" : "✓ SIMULATED"}
+                </span>
+              </div>
+
+              {/* Feedback message */}
+              {modeSwitchMsg && (
+                <div style={{
+                  marginTop: 8, fontFamily: "JetBrains Mono, monospace", fontSize: 10,
+                  color: modeSwitchMsg.ok ? "#4ade80" : "#f87171",
+                  padding: "6px 10px",
+                  background: modeSwitchMsg.ok ? "rgba(74,222,128,0.07)" : "rgba(248,113,113,0.07)",
+                  border: `1px solid ${modeSwitchMsg.ok ? "rgba(74,222,128,0.2)" : "rgba(248,113,113,0.2)"}`,
+                  borderRadius: 3,
+                }}>
+                  {modeSwitchMsg.ok ? "✓" : "✗"} {modeSwitchMsg.text}
+                </div>
+              )}
+
+              {/* Alpaca account info */}
+              {exec?.alpaca_account && (
+                <div style={{ marginTop: 10, display: "flex", gap: 16 }}>
+                  {[
+                    { label: "EQUITY",        value: `$${parseFloat(exec.alpaca_account.equity || 0).toLocaleString(undefined, {maximumFractionDigits:0})}` },
+                    { label: "CASH",          value: `$${parseFloat(exec.alpaca_account.cash || 0).toLocaleString(undefined, {maximumFractionDigits:0})}` },
+                    { label: "BUYING POWER",  value: `$${parseFloat(exec.alpaca_account.buying_power || 0).toLocaleString(undefined, {maximumFractionDigits:0})}` },
+                  ].map(({ label, value }) => (
+                    <div key={label}>
+                      <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 8, color: "rgba(232,224,208,0.3)", letterSpacing: "0.1em", marginBottom: 2 }}>{label}</div>
+                      <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "rgba(232,224,208,0.75)" }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {exec?.last_cycle && (
             <div style={{ ...mono, fontSize: 9, color: "rgba(232,224,208,0.25)", marginTop: 8 }}>Last cycle: {exec.last_cycle}</div>
           )}

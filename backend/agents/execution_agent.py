@@ -20,7 +20,10 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-ALPACA_BASE   = "https://paper-api.alpaca.markets"
+ALPACA_LIVE_URL  = "https://api.alpaca.markets"
+ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
+ALPACA_BASE      = os.getenv("ALPACA_BASE_URL", ALPACA_LIVE_URL)
+
 STATE_FILE    = Path("/tmp/alpha_foundry_cache/execution_state.json")
 STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -119,9 +122,10 @@ class PaperPortfolio:
 # ── Alpaca client (optional, paper only) ─────────────────────────────────────
 
 class AlpacaClient:
-    def __init__(self):
+    def __init__(self, base_url: str = ALPACA_BASE):
         self.api_key    = os.getenv("ALPACA_API_KEY", "")
         self.secret_key = os.getenv("ALPACA_SECRET_KEY", "")
+        self.base_url   = base_url
         self.enabled    = bool(self.api_key and self.secret_key)
         self._headers   = {
             "APCA-API-KEY-ID":     self.api_key,
@@ -129,12 +133,21 @@ class AlpacaClient:
             "Content-Type":        "application/json",
         }
 
+    @property
+    def mode(self) -> str:
+        return "PAPER" if "paper-api" in self.base_url else "LIVE"
+
+    def switch(self, mode: str):
+        """Hot-switch between 'live' and 'paper' without restarting."""
+        self.base_url = ALPACA_PAPER_URL if mode == "paper" else ALPACA_LIVE_URL
+        log.info(f"Alpaca switched to {self.mode} → {self.base_url}")
+
     def _get(self, path: str) -> Optional[dict]:
         if not self.enabled:
             return None
         try:
             import requests
-            r = requests.get(f"{ALPACA_BASE}{path}", headers=self._headers, timeout=5)
+            r = requests.get(f"{self.base_url}{path}", headers=self._headers, timeout=5)
             return r.json() if r.ok else None
         except Exception as e:
             log.warning(f"Alpaca GET {path}: {e}")
@@ -146,7 +159,11 @@ class AlpacaClient:
         try:
             import requests
             r = requests.post(f"{ALPACA_BASE}{path}", json=body, headers=self._headers, timeout=5)
-            return r.json() if r.ok else None
+            if r.ok:
+                return r.json()
+            else:
+                log.warning(f"Alpaca POST {path} failed {r.status_code}: {r.text[:300]}")
+                return None
         except Exception as e:
             log.warning(f"Alpaca POST {path}: {e}")
             return None
@@ -158,18 +175,21 @@ class AlpacaClient:
         return self._get("/v2/positions")
 
     def submit_order(self, ticker: str, side: str, qty: int, order_type: str = "market") -> Optional[dict]:
-        return self._post("/v2/orders", {
+        result = self._post("/v2/orders", {
             "symbol":        ticker,
             "qty":           str(qty),
             "side":          side.lower(),
             "type":          order_type,
-            "time_in_force": "day",
+            "time_in_force": "gtc",  # good-till-cancelled: works outside market hours
         })
+        if result:
+            log.info(f"Alpaca order submitted: {side} {qty}x{ticker} → id={result.get('id','?')} status={result.get('status','?')}")
+        return result
 
     def close_position(self, ticker: str) -> Optional[dict]:
         try:
             import requests
-            r = requests.delete(f"{ALPACA_BASE}/v2/positions/{ticker}", headers=self._headers, timeout=5)
+            r = requests.delete(f"{self.base_url}/v2/positions/{ticker}", headers=self._headers, timeout=5)
             return r.json() if r.ok else None
         except Exception as e:
             log.warning(f"Alpaca close {ticker}: {e}")
@@ -194,13 +214,18 @@ class ExecutionAgent:
     def __init__(self):
         self.alpaca       = AlpacaClient()
         self.paper        = PaperPortfolio(initial_cash=100_000.0)
-        self.mode         = "ALPACA_PAPER" if self.alpaca.enabled else "IN_MEMORY_PAPER"
         self.is_running   = False
         self.last_cycle   = None
         self.cycle_log: List[dict] = []
         self.status       = "IDLE"
         self._load_state()
-        log.info(f"ExecutionAgent init — mode: {self.mode}")
+        log.info(f"ExecutionAgent init — alpaca_mode: {self.alpaca.mode}, enabled: {self.alpaca.enabled}")
+
+    @property
+    def mode(self) -> str:
+        if not self.alpaca.enabled:
+            return "IN_MEMORY_PAPER"
+        return f"ALPACA_{self.alpaca.mode}"  # ALPACA_LIVE or ALPACA_PAPER
 
     def _load_state(self):
         try:
@@ -391,9 +416,11 @@ class ExecutionAgent:
     def get_state(self) -> dict:
         state = self.paper.to_dict()
         state.update({
-            "mode":       self.mode,
-            "status":     self.status,
-            "last_cycle": self.last_cycle,
+            "mode":         self.mode,
+            "alpaca_mode":  self.alpaca.mode,   # "LIVE" or "PAPER"
+            "alpaca_url":   self.alpaca.base_url,
+            "status":       self.status,
+            "last_cycle":   self.last_cycle,
             "alpaca_enabled": self.alpaca.enabled,
             "recent_cycles":  self.cycle_log[-5:][::-1],
         })
@@ -402,8 +429,10 @@ class ExecutionAgent:
             acct = self.alpaca.get_account()
             if acct:
                 state["alpaca_account"] = {
-                    "equity":      acct.get("equity"),
-                    "buying_power": acct.get("buying_power"),
+                    "equity":          acct.get("equity"),
+                    "buying_power":    acct.get("buying_power"),
                     "portfolio_value": acct.get("portfolio_value"),
+                    "cash":            acct.get("cash"),
+                    "status":          acct.get("status"),
                 }
         return state
