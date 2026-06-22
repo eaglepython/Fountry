@@ -1,24 +1,37 @@
 """
-Quant Alpha Foundry — FastAPI Backend v2.1
+Quant Alpha Foundry — FastAPI Backend v2.2
 Serves real signal metrics, walk-forward results, regime labels,
-FRED macro signals, and SEC EDGAR accounting signals.
+FRED macro signals, SEC EDGAR accounting signals, and autonomous agents.
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-import asyncio, time, logging
+from fastapi.responses import JSONResponse
+import asyncio, time, logging, math, json
 from contextlib import asynccontextmanager
 
-from signals    import SignalEngine
-from regimes    import RegimeDetector
-from portfolio  import PortfolioEngine
+from signals     import SignalEngine
+from regimes     import RegimeDetector
+from portfolio   import PortfolioEngine
 from data_loader import DataLoader
-from cache      import Cache
-from fred_signals  import FREDLoader, MacroSignalEngine
-from edgar_signals import SECEdgarLoader, AccountingSignalEngine
+from cache       import Cache
+from fred_signals   import FREDLoader, MacroSignalEngine
+from edgar_signals  import SECEdgarLoader, AccountingSignalEngine
+from agents import ExecutionAgent, LLMCommentaryAgent, AgentScheduler
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
+
+
+def _sanitize(obj):
+    """Recursively replace NaN/Inf floats with None for JSON safety."""
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize(v) for v in obj]
+    return obj
 
 cache             = Cache()
 data_loader       = DataLoader()
@@ -56,11 +69,13 @@ async def lifespan(app: FastAPI):
     # ── 2. FRED macro signals ───────────────────────────────────────────────
     try:
         log.info("Loading FRED macro data…")
-        fred_data = await loop.run_in_executor(None, fred_loader.load_all)
+        fred_data = await asyncio.wait_for(
+            loop.run_in_executor(None, fred_loader.load_all),
+            timeout=12.0)
         macro_engine = MacroSignalEngine(fred_loader)
         log.info(f"✅ FRED: {len(fred_data)} series loaded")
-    except Exception as e:
-        log.warning(f"FRED load failed (using synthetic): {e}")
+    except (Exception, asyncio.TimeoutError) as e:
+        log.warning(f"FRED load skipped ({type(e).__name__}) — using synthetic fallback")
         macro_engine = MacroSignalEngine(fred_loader)
 
     # ── 3. SEC EDGAR accounting signals ────────────────────────────────────
@@ -69,13 +84,15 @@ async def lifespan(app: FastAPI):
         accounting_engine = AccountingSignalEngine(edgar_loader)
         tickers = data_loader.equity_universe[:25] if data_loader.is_loaded else []
         if tickers:
-            await loop.run_in_executor(None,
-                lambda: accounting_engine.load_universe(tickers))
+            await asyncio.wait_for(
+                loop.run_in_executor(None,
+                    lambda: accounting_engine.load_universe(tickers)),
+                timeout=15.0)
             log.info(f"✅ EDGAR: {len(accounting_engine._universe_data)} tickers")
         else:
             log.warning("No universe tickers — EDGAR signals will use fallback")
-    except Exception as e:
-        log.warning(f"EDGAR load failed (using synthetic): {e}")
+    except (Exception, asyncio.TimeoutError) as e:
+        log.warning(f"EDGAR load skipped ({type(e).__name__}) — using synthetic fallback")
         accounting_engine = AccountingSignalEngine(edgar_loader)
 
     # ── 4. Agents ───────────────────────────────────────────────────────────
@@ -218,16 +235,16 @@ async def get_all_macro():
     """All FRED macro signals + composite regime score."""
     if not macro_engine:
         raise HTTPException(503, "Macro engine not ready")
-    return cache.get_or_compute("macro_all",
-                                macro_engine.all_signals, ttl=3600)
+    data = cache.get_or_compute("macro_all", macro_engine.all_signals, ttl=3600)
+    return JSONResponse(content=_sanitize(data))
 
 @app.get("/api/macro/composite")
 async def get_macro_composite():
     """Composite macro regime score from all FRED signals."""
     if not macro_engine:
         raise HTTPException(503, "Macro engine not ready")
-    return cache.get_or_compute("macro_composite",
-                                macro_engine.composite_regime_score, ttl=3600)
+    data = cache.get_or_compute("macro_composite", macro_engine.composite_regime_score, ttl=3600)
+    return JSONResponse(content=_sanitize(data))
 
 @app.get("/api/macro/{signal_name}")
 async def get_macro_signal(signal_name: str):
@@ -246,7 +263,8 @@ async def get_macro_signal(signal_name: str):
     fn = fn_map.get(signal_name)
     if not fn:
         raise HTTPException(404, f"Unknown macro signal: {signal_name}")
-    return cache.get_or_compute(f"macro_{signal_name}", fn, ttl=3600)
+    data = cache.get_or_compute(f"macro_{signal_name}", fn, ttl=3600)
+    return JSONResponse(content=_sanitize(data))
 
 # ── SEC EDGAR Accounting Signals ─────────────────────────────────────────────
 @app.get("/api/accounting/universe")

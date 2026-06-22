@@ -2,12 +2,16 @@
 LLM Commentary Agent — Analyzes signal metrics and writes institutional-grade
 research commentary.
 
-Model priority (all free / local):
-  1. Ollama (local) — llama3, mistral, phi3 — best quality, runs on your machine
-  2. Groq API (free tier) — llama3-8b — fast cloud, no cost for light usage
-  3. Template engine — deterministic rule-based commentary (always available)
+Model priority:
+  1. NVIDIA NIM API — minimaxai/minimax-m2.7 — primary, most powerful
+  2. Ollama (local) — llama3, mistral, phi3 — local fallback
+  3. Groq API (free tier) — llama3-8b — cloud fallback
+  4. Template engine — deterministic rule-based commentary (always available)
 
 Set environment variables:
+  NVIDIA_API_KEY=nvapi-...             (set in .env)
+  NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+  NVIDIA_MODEL=minimaxai/minimax-m2.7
   OLLAMA_HOST=http://localhost:11434   (default, no key needed)
   GROQ_API_KEY=your_key               (free at console.groq.com)
 """
@@ -22,11 +26,58 @@ log = logging.getLogger(__name__)
 COMMENTARY_CACHE = Path("/tmp/alpha_foundry_cache/commentary.json")
 COMMENTARY_CACHE.parent.mkdir(parents=True, exist_ok=True)
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+NVIDIA_API_KEY  = os.getenv("NVIDIA_API_KEY", "")
+NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+NVIDIA_MODEL    = os.getenv("NVIDIA_MODEL",    "minimaxai/minimax-m2.7")
+OLLAMA_HOST     = os.getenv("OLLAMA_HOST",     "http://localhost:11434")
+GROQ_API_KEY    = os.getenv("GROQ_API_KEY",    "")
 
 
 # ── LLM Backends ─────────────────────────────────────────────────────────────
+
+def _call_nvidia(prompt: str, model: str = NVIDIA_MODEL) -> Optional[str]:
+    """Call NVIDIA NIM API (OpenAI-compatible). Primary LLM — most powerful."""
+    if not NVIDIA_API_KEY:
+        return None
+    try:
+        import requests
+        resp = requests.post(
+            f"{NVIDIA_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {NVIDIA_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a senior quantitative analyst at a world-class systematic "
+                            "hedge fund. Your research notes are precise, data-driven, and "
+                            "institutional in tone. You combine rigorous statistical reasoning "
+                            "with deep market intuition to produce actionable alpha insights."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "max_tokens": 1024,
+                "temperature": 0.35,
+                "top_p": 0.9,
+                "stream": False,
+            },
+            timeout=45,
+        )
+        if resp.ok:
+            content = resp.json()["choices"][0]["message"]["content"].strip()
+            log.info(f"NVIDIA NIM ({model}): {len(content)} chars generated")
+            return content
+        else:
+            log.warning(f"NVIDIA API error {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        log.warning(f"NVIDIA NIM unavailable: {e}")
+    return None
+
 
 def _call_ollama(prompt: str, model: str = "llama3") -> Optional[str]:
     """Call local Ollama instance. Free, runs on your machine."""
@@ -72,7 +123,10 @@ def _call_groq(prompt: str, model: str = "llama3-8b-8192") -> Optional[str]:
 
 
 def _call_llm(prompt: str) -> Optional[str]:
-    """Try Ollama → Groq → None."""
+    """Try NVIDIA NIM → Ollama → Groq → None."""
+    result = _call_nvidia(prompt)
+    if result:
+        return result
     result = _call_ollama(prompt)
     if result:
         return result
@@ -243,16 +297,28 @@ class LLMCommentaryAgent:
                 "macro_summary":     macro_signals,
             }
 
-            # Try LLM first, fall back to template
+            # Try LLM first (NVIDIA → Ollama → Groq), fall back to template
             llm_text = _call_llm(_build_prompt(context))
             template_text = _template_commentary(context)
+
+            # Determine which backend was used
+            if llm_text and NVIDIA_API_KEY:
+                llm_source = "nvidia"
+            elif llm_text and GROQ_API_KEY:
+                llm_source = "groq"
+            elif llm_text:
+                llm_source = "ollama"
+            else:
+                llm_source = "template"
 
             report = {
                 "status":        "ok",
                 "timestamp":     datetime.utcnow().isoformat(),
                 "regime":        regime,
                 "llm_available": llm_text is not None,
-                "source":        "llm" if llm_text else "template",
+                "source":        llm_source,
+                "model":         NVIDIA_MODEL if llm_source == "nvidia" else ("llama3" if llm_source == "ollama" else ("llama3-8b-8192" if llm_source == "groq" else "template")),
+                "backend":       "nvidia_nim" if llm_source == "nvidia" else llm_source,
                 "commentary":    llm_text or template_text,
                 "template":      template_text,  # always include template version
                 "stats": {
