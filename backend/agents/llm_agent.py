@@ -2,18 +2,18 @@
 LLM Commentary Agent — Analyzes signal metrics and writes institutional-grade
 research commentary.
 
-Model priority:
-  1. NVIDIA NIM API — minimaxai/minimax-m2.7 — primary, most powerful
-  2. Ollama (local) — llama3, mistral, phi3 — local fallback
-  3. Groq API (free tier) — llama3-8b — cloud fallback
-  4. Template engine — deterministic rule-based commentary (always available)
+Model assignments (NVIDIA NIM — purpose-built per task):
+  COMMENTARY  : writer/palmyra-fin-70b-32k        — finance-specialist 70B, 32k context
+  REGIME      : stockmark/stockmark-2-100b-instruct — stock market domain expert 100B
+  REASONING   : nvidia/llama-3.1-nemotron-ultra-253b-v1 — deep reasoning 253B
+  FALLBACK    : deepseek-ai/deepseek-v4-pro        — best general reasoning
+  FAST        : meta/llama-3.3-70b-instruct        — fast responses
 
-Set environment variables:
-  NVIDIA_API_KEY=nvapi-...             (set in .env)
+Priority chain: NVIDIA NIM → Ollama (local) → Groq → Template engine
+
+Set environment variables in .env:
+  NVIDIA_API_KEY=nvapi-...
   NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
-  NVIDIA_MODEL=minimaxai/minimax-m2.7
-  OLLAMA_HOST=http://localhost:11434   (default, no key needed)
-  GROQ_API_KEY=your_key               (free at console.groq.com)
 """
 import os, logging, time, json
 from datetime import datetime
@@ -28,54 +28,104 @@ COMMENTARY_CACHE.parent.mkdir(parents=True, exist_ok=True)
 
 NVIDIA_API_KEY  = os.getenv("NVIDIA_API_KEY", "")
 NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-NVIDIA_MODEL    = os.getenv("NVIDIA_MODEL",    "minimaxai/minimax-m2.7")
 OLLAMA_HOST     = os.getenv("OLLAMA_HOST",     "http://localhost:11434")
 GROQ_API_KEY    = os.getenv("GROQ_API_KEY",    "")
+
+# ── NVIDIA Model Registry — purpose-built per agent task ─────────────────────
+NVIDIA_MODELS = {
+    # Primary commentary model — finance specialist, 32k context window
+    "commentary":  os.getenv("NVIDIA_MODEL_COMMENTARY", "writer/palmyra-fin-70b-32k"),
+    # Regime + macro analysis — stock market domain expert
+    "regime":      os.getenv("NVIDIA_MODEL_REGIME",     "stockmark/stockmark-2-100b-instruct"),
+    # Deep signal reasoning — ultra-large reasoning model
+    "reasoning":   os.getenv("NVIDIA_MODEL_REASONING",  "nvidia/llama-3.1-nemotron-ultra-253b-v1"),
+    # Fallback / fast inference
+    "fast":        os.getenv("NVIDIA_MODEL_FAST",       "meta/llama-3.3-70b-instruct"),
+    # General fallback
+    "default":     os.getenv("NVIDIA_MODEL",            "deepseek-ai/deepseek-v4-pro"),
+}
+
+# Keep backward compat
+NVIDIA_MODEL = NVIDIA_MODELS["commentary"]
 
 
 # ── LLM Backends ─────────────────────────────────────────────────────────────
 
-def _call_nvidia(prompt: str, model: str = NVIDIA_MODEL) -> Optional[str]:
-    """Call NVIDIA NIM API (OpenAI-compatible). Primary LLM — most powerful."""
+def _call_nvidia(prompt: str, task: str = "commentary") -> Optional[str]:
+    """Call NVIDIA NIM API with the right model for each task.
+
+    Tasks:
+      commentary  → writer/palmyra-fin-70b-32k   (finance specialist)
+      regime      → stockmark/stockmark-2-100b   (market domain expert)
+      reasoning   → nvidia/nemotron-ultra-253b   (deep reasoning)
+      fast        → meta/llama-3.3-70b           (quick responses)
+      default     → deepseek-v4-pro              (general fallback)
+    """
     if not NVIDIA_API_KEY:
         return None
+
+    model = NVIDIA_MODELS.get(task, NVIDIA_MODELS["default"])
+
+    # System prompts tailored per task
+    system_prompts = {
+        "commentary": (
+            "You are a senior quantitative analyst at a world-class systematic hedge fund. "
+            "Your research notes are precise, data-driven, and institutional in tone. "
+            "Combine rigorous statistical reasoning with deep market intuition to produce "
+            "actionable alpha insights. Write in flowing prose — no bullet lists."
+        ),
+        "regime": (
+            "You are a macro strategist and market regime expert. You analyze economic cycles, "
+            "volatility regimes, yield curves, and cross-asset signals to classify market states "
+            "and predict regime transitions. Be precise and data-driven."
+        ),
+        "reasoning": (
+            "You are an expert quantitative researcher. Think step-by-step through complex "
+            "financial data, signal interactions, and statistical relationships. "
+            "Provide deep analytical reasoning with specific data references."
+        ),
+        "fast": (
+            "You are a concise quantitative analyst. Provide brief, accurate financial analysis."
+        ),
+        "default": (
+            "You are a senior quantitative analyst. Be precise, data-driven, and institutional."
+        ),
+    }
+    system = system_prompts.get(task, system_prompts["default"])
+
     try:
         import requests
         resp = requests.post(
             f"{NVIDIA_BASE_URL}/chat/completions",
             headers={
                 "Authorization": f"Bearer {NVIDIA_API_KEY}",
-                "Content-Type": "application/json",
+                "Content-Type":  "application/json",
             },
             json={
-                "model": model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a senior quantitative analyst at a world-class systematic "
-                            "hedge fund. Your research notes are precise, data-driven, and "
-                            "institutional in tone. You combine rigorous statistical reasoning "
-                            "with deep market intuition to produce actionable alpha insights."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
+                "model":       model,
+                "messages":    [
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": prompt},
                 ],
-                "max_tokens": 1024,
+                "max_tokens":  1024,
                 "temperature": 0.35,
-                "top_p": 0.9,
-                "stream": False,
+                "top_p":       0.9,
+                "stream":      False,
             },
-            timeout=45,
+            timeout=60,
         )
         if resp.ok:
             content = resp.json()["choices"][0]["message"]["content"].strip()
-            log.info(f"NVIDIA NIM ({model}): {len(content)} chars generated")
+            log.info(f"NVIDIA NIM [{task}] ({model}): {len(content)} chars")
             return content
         else:
-            log.warning(f"NVIDIA API error {resp.status_code}: {resp.text[:200]}")
+            log.warning(f"NVIDIA [{task}] {resp.status_code}: {resp.text[:200]}")
+            # Try fast fallback model if primary failed
+            if task != "fast" and task != "default":
+                log.info(f"Retrying with fast fallback model…")
+                return _call_nvidia(prompt, task="fast")
     except Exception as e:
-        log.warning(f"NVIDIA NIM unavailable: {e}")
+        log.warning(f"NVIDIA NIM [{task}] unavailable: {e}")
     return None
 
 
@@ -122,9 +172,9 @@ def _call_groq(prompt: str, model: str = "llama3-8b-8192") -> Optional[str]:
     return None
 
 
-def _call_llm(prompt: str) -> Optional[str]:
-    """Try NVIDIA NIM → Ollama → Groq → None."""
-    result = _call_nvidia(prompt)
+def _call_llm(prompt: str, task: str = "commentary") -> Optional[str]:
+    """Try NVIDIA NIM (task-specific model) → Ollama → Groq → None."""
+    result = _call_nvidia(prompt, task=task)
     if result:
         return result
     result = _call_ollama(prompt)
@@ -297,19 +347,23 @@ class LLMCommentaryAgent:
                 "macro_summary":     macro_signals,
             }
 
-            # Try LLM first (NVIDIA → Ollama → Groq), fall back to template
-            llm_text = _call_llm(_build_prompt(context))
+            # Try LLM first (NVIDIA finance model → Ollama → Groq), fall back to template
+            llm_text = _call_llm(_build_prompt(context), task="commentary")
             template_text = _template_commentary(context)
 
             # Determine which backend was used
             if llm_text and NVIDIA_API_KEY:
                 llm_source = "nvidia"
+                model_used = NVIDIA_MODELS["commentary"]
             elif llm_text and GROQ_API_KEY:
                 llm_source = "groq"
+                model_used = "llama3-8b-8192"
             elif llm_text:
                 llm_source = "ollama"
+                model_used = "llama3"
             else:
                 llm_source = "template"
+                model_used = "template"
 
             report = {
                 "status":        "ok",
@@ -317,7 +371,7 @@ class LLMCommentaryAgent:
                 "regime":        regime,
                 "llm_available": llm_text is not None,
                 "source":        llm_source,
-                "model":         NVIDIA_MODEL if llm_source == "nvidia" else ("llama3" if llm_source == "ollama" else ("llama3-8b-8192" if llm_source == "groq" else "template")),
+                "model":         model_used,
                 "backend":       "nvidia_nim" if llm_source == "nvidia" else llm_source,
                 "commentary":    llm_text or template_text,
                 "template":      template_text,  # always include template version
