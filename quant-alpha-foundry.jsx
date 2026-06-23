@@ -378,9 +378,9 @@ function FoundryOverview({ onSelectSignal, metrics }) {
   const avgNetSharpe = (promoted.reduce((a, s) => a + parseFloat(metrics[s.id].netSharpe), 0) / promoted.length).toFixed(2);
 
   return (
-    <div style={{ padding: "32px 40px", maxWidth: 1400, margin: "0 auto" }}>
+    <div className="page-pad" style={{ padding: "32px 40px", maxWidth: 1400, margin: "0 auto" }}>
       {/* KPI Strip */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, marginBottom: 32 }}>
+      <div className="stat-grid-6" style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, marginBottom: 32 }}>
         <StatCard label="Signals Researched" value={SIGNALS.length} sub="Active universe" size="normal"/>
         <StatCard label="Promoted" value={promoted.length} sub="Pass all gates" color="#4ade80" size="normal"/>
         <StatCard label="In Review" value={review.length} sub="Needs work" color="#facc15" size="normal"/>
@@ -390,7 +390,7 @@ function FoundryOverview({ onSelectSignal, metrics }) {
       </div>
 
       {/* Signal Pipeline */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
+      <div className="grid-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
         {/* Promoted Signals */}
         <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 6, padding: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -519,14 +519,14 @@ function SignalLab({ signal, metrics }) {
       </div>
 
       {/* Core Metrics */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 24 }}>
+      <div className="stat-grid-5" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 24 }}>
         <StatCard label="Information Coefficient" value={m.ic} sub="Mean IC (annualized)" color="#c9a96e" size="normal"/>
         <StatCard label="IC Information Ratio" value={m.icir} sub="IC / σ(IC)" color="#c9a96e" size="normal"/>
         <StatCard label="Gross Sharpe" value={m.grossSharpe} sub="Before TC" color="#4ade80" size="normal"/>
         <StatCard label="Net Sharpe" value={m.netSharpe} sub={`After ${m.tcCost}% TC`} color={parseFloat(m.netSharpe) > 0.5 ? "#4ade80" : "#f87171"} size="normal"/>
         <StatCard label="Max Drawdown" value={`${m.maxDD}%`} sub="Worst period" color="#f87171" size="normal"/>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 28 }}>
+      <div className="stat-grid-5" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 28 }}>
         <StatCard label="Annual Turnover" value={`${m.turnover}%`} sub="One-way" color="#c9a96e"/>
         <StatCard label="Win Rate" value={`${m.winRate}%`} sub="Long-side" color="#4ade80"/>
         <StatCard label="Hit Rate" value={`${m.hitRate}%`} sub="Long-short" color="#c9a96e"/>
@@ -974,6 +974,43 @@ const CSS = `
   @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
   .fade-in { animation: fadeIn 0.4s ease forwards; }
   .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #4ade80; animation: pulse 2s ease-in-out infinite; display: inline-block; margin-right: 6px; }
+
+  /* ── Mobile nav drawer ── */
+  .mobile-menu-btn { display: none; background: none; border: 1px solid rgba(201,169,110,0.3); padding: 6px 10px; border-radius: 3px; color: #c9a96e; font-size: 16px; }
+  .nav-tabs-mobile { display: none; position: fixed; top: 56px; left: 0; right: 0; z-index: 99;
+    background: rgba(7,11,18,0.98); border-bottom: 1px solid rgba(201,169,110,0.15);
+    flex-direction: column; padding: 8px 0; }
+  .nav-tabs-mobile.open { display: flex; }
+  .nav-tabs-mobile button { padding: 12px 24px !important; font-size: 13px !important; border-bottom: none !important; border-left: 2px solid transparent; text-align: left; }
+  .nav-tabs-mobile button.active-tab { border-left: 2px solid #c9a96e !important; }
+
+  /* ── Responsive grid overrides ── */
+  @media (max-width: 768px) {
+    .mobile-menu-btn { display: block !important; }
+    .nav-tabs-desktop { display: none !important; }
+    .nav-ticker { display: none !important; }
+    .nav-brand-sub { display: none !important; }
+
+    .page-pad { padding: 16px !important; }
+    .stat-grid-6 { grid-template-columns: repeat(2, 1fr) !important; }
+    .stat-grid-5 { grid-template-columns: repeat(2, 1fr) !important; }
+    .stat-grid-4 { grid-template-columns: repeat(2, 1fr) !important; }
+    .stat-grid-3 { grid-template-columns: repeat(2, 1fr) !important; }
+    .grid-2col  { grid-template-columns: 1fr !important; }
+    .grid-2col-agents { grid-template-columns: 1fr !important; }
+    .hide-mobile { display: none !important; }
+    .signal-row-grid { grid-template-columns: 1fr auto auto !important; }
+    .signal-rank-col { display: none !important; }
+    .overflow-mobile { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .page-title { font-size: 22px !important; }
+    .nav-inner { padding: 0 16px !important; }
+  }
+
+  @media (max-width: 480px) {
+    .stat-grid-6 { grid-template-columns: repeat(2, 1fr) !important; }
+    .stat-grid-5 { grid-template-columns: repeat(2, 1fr) !important; }
+    .card-pad { padding: 14px !important; }
+  }
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1074,9 +1111,9 @@ function AgentsDashboard({ agentData, apiBase }) {
   );
 
   return (
-    <div style={{ padding: "32px 40px", maxWidth: 1400, margin: "0 auto" }}>
+    <div className="page-pad" style={{ padding: "32px 40px", maxWidth: 1400, margin: "0 auto" }}>
       <div style={{ marginBottom: 28 }}>
-        <h2 style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 28, color: "#c9a96e", letterSpacing: "0.05em", marginBottom: 4 }}>AUTONOMOUS AGENTS</h2>
+        <h2 className="page-title" style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 28, color: "#c9a96e", letterSpacing: "0.05em", marginBottom: 4 }}>AUTONOMOUS AGENTS</h2>
         <p style={{ fontFamily: "Cormorant Garamond, serif", fontSize: 15, color: "rgba(232,224,208,0.5)", margin: 0 }}>
           Execution bot · AI commentary engine · Background data scheduler
         </p>
@@ -1087,8 +1124,8 @@ function AgentsDashboard({ agentData, apiBase }) {
         )}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
-
+      <div className="grid-2col-agents" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}
+>
         {/* ── Execution Agent ── */}
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -1556,6 +1593,7 @@ export default function QuantAlphaFoundry() {
 
   const livePrice = (100 + Math.sin(tick * 0.3) * 2 + tick * 0.05).toFixed(2);
   const tickerPnl = (12.4 + Math.sin(tick * 0.2) * 0.3).toFixed(2);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
     <div style={{ minHeight: "100vh", background: "#070b12" }}>
@@ -1576,9 +1614,8 @@ export default function QuantAlphaFoundry() {
         position: "sticky", top: 0, zIndex: 100,
         background: "rgba(7,11,18,0.97)", backdropFilter: "blur(24px)",
         borderBottom: "1px solid rgba(201,169,110,0.12)",
-        padding: "0 40px",
       }}>
-        <div style={{ maxWidth: 1400, margin: "0 auto", display: "flex", alignItems: "center", height: 56, gap: 0 }}>
+        <div className="nav-inner" style={{ maxWidth: 1400, margin: "0 auto", display: "flex", alignItems: "center", height: 56, gap: 0, padding: "0 40px" }}>
           {/* Brand */}
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginRight: 40, flexShrink: 0 }}>
             <div style={{ position: "relative" }}>
@@ -1588,12 +1625,12 @@ export default function QuantAlphaFoundry() {
             </div>
             <div>
               <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.2em" }}>ALPHA FOUNDRY</div>
-              <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 8, color: "rgba(201,169,110,0.45)", letterSpacing: "0.2em" }}>INSTITUTIONAL RESEARCH PLATFORM</div>
+              <div className="nav-brand-sub" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 8, color: "rgba(201,169,110,0.45)", letterSpacing: "0.2em" }}>INSTITUTIONAL RESEARCH PLATFORM</div>
             </div>
           </div>
 
-          {/* Nav Tabs */}
-          <div style={{ display: "flex", flex: 1, gap: 2 }}>
+          {/* Desktop Nav Tabs */}
+          <div className="nav-tabs-desktop" style={{ display: "flex", flex: 1, gap: 2 }}>
             {VIEWS.map(v => (
               <button key={v} onClick={() => setActiveView(v)} style={{
                 padding: "8px 18px", border: "none",
@@ -1609,8 +1646,13 @@ export default function QuantAlphaFoundry() {
             ))}
           </div>
 
+          {/* Hamburger button (mobile only) */}
+          <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(o => !o)} style={{ marginLeft: "auto" }}>
+            {mobileMenuOpen ? "✕" : "☰"}
+          </button>
+
           {/* Live Ticker + Data Source */}
-          <div style={{ display: "flex", gap: 20, alignItems: "center", fontFamily: "JetBrains Mono, monospace", fontSize: 11, flexShrink: 0 }}>
+          <div className="nav-ticker" style={{ display: "flex", gap: 20, alignItems: "center", fontFamily: "JetBrains Mono, monospace", fontSize: 11, flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 14px", background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 2 }}>
               <span className="live-dot"/>
               <span style={{ color: "rgba(232,224,208,0.5)" }}>PNL</span>
@@ -1624,6 +1666,21 @@ export default function QuantAlphaFoundry() {
           </div>
         </div>
       </nav>
+
+      {/* Mobile Nav Drawer */}
+      <div className={`nav-tabs-mobile${mobileMenuOpen ? " open" : ""}`}>
+        {VIEWS.map(v => (
+          <button key={v} className={activeView === v ? "active-tab" : ""}
+            onClick={() => { setActiveView(v); setMobileMenuOpen(false); }}
+            style={{
+              padding: "12px 24px", border: "none", borderLeft: "2px solid transparent",
+              background: activeView === v ? "rgba(201,169,110,0.08)" : "transparent",
+              color: activeView === v ? "#c9a96e" : "rgba(232,224,208,0.5)",
+              fontFamily: "JetBrains Mono, monospace", fontSize: 13, letterSpacing: "0.12em",
+              textAlign: "left", width: "100%",
+            }}>{v}</button>
+        ))}
+      </div>
 
       {/* Computing banner */}
       {isComputing && (
