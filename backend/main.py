@@ -384,6 +384,15 @@ async def switch_alpaca_mode(mode: str):
     }
 
 
+@app.post("/api/agents/execution/reset")
+async def reset_circuit_breaker():
+    """Reset circuit breaker and re-anchor NAV baseline to current value."""
+    if not execution_agent:
+        raise HTTPException(503, "Execution agent not ready")
+    result = execution_agent.reset_circuit_breaker()
+    return result
+
+
 @app.get("/api/agents/execution/positions")
 async def get_positions():
     """Current open positions in the paper portfolio."""

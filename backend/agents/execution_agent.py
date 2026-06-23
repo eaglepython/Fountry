@@ -234,6 +234,8 @@ class ExecutionAgent:
                     state = json.load(f)
                 self.paper.cash = state.get("cash", self.paper.cash)
                 self.paper.trades = state.get("trades", [])
+                # Sync _nav_open so circuit breaker doesn't trip immediately on restart
+                self.paper._nav_open = self.paper.nav
                 log.info(f"Loaded execution state: NAV=${self.paper.nav:,.0f}")
         except Exception:
             pass
@@ -244,6 +246,13 @@ class ExecutionAgent:
                 json.dump({"cash": self.paper.cash, "trades": self.paper.trades[-200:]}, f)
         except Exception:
             pass
+
+    def reset_circuit_breaker(self):
+        """Reset the circuit breaker and re-anchor NAV open to current NAV."""
+        self.status = "IDLE"
+        self.paper._nav_open = self.paper.nav
+        log.info(f"Circuit breaker reset — NAV anchor: ${self.paper.nav:,.0f}")
+        return {"status": "ok", "nav": round(self.paper.nav, 2), "message": "Circuit breaker reset"}
 
     def _get_target_positions(self, signal_metrics: list) -> Dict[str, dict]:
         """
