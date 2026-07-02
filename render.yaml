@@ -5,8 +5,15 @@ services:
     runtime: python
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: CORS_ORIGINS
+        value: https://fountry.netlify.app
+      - key: CACHE_TTL_HOURS
+        value: "24"
+      - key: PORT
+        value: "10000"
     plan: free

@@ -1502,8 +1502,18 @@ export default function QuantAlphaFoundry() {
   useEffect(() => {
     async function fetchLive() {
       try {
-        const healthRes = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
-        if (!healthRes.ok) return;
+        // Render free tier cold-starts take up to 50s — use generous timeout + retry
+        let healthRes;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            healthRes = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(25000) });
+            if (healthRes.ok) break;
+          } catch {
+            if (attempt === 2) return; // all retries exhausted
+            await new Promise(r => setTimeout(r, 5000));
+          }
+        }
+        if (!healthRes || !healthRes.ok) return;
         const health = await healthRes.json();
         if (!health.data_loaded) { setIsComputing(true); return; }
 
