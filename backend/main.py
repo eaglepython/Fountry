@@ -1,5 +1,5 @@
 """
-Quant Alpha Foundry — FastAPI Backend v2.2
+Fountry — FastAPI Backend v2.2
 Serves real signal metrics, walk-forward results, regime labels,
 FRED macro signals, SEC EDGAR accounting signals, and autonomous agents.
 """
@@ -121,7 +121,7 @@ async def lifespan(app: FastAPI):
     log.info("Shutting down…")
     scheduler.stop()
 
-app = FastAPI(title="Alpha Foundry API", version="2.1.0", lifespan=lifespan)
+app = FastAPI(title="Fountry API", version="2.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 

@@ -1,4 +1,4 @@
-# Alpha Foundry Backend — Requirements
+# Fountry Backend — Requirements
 # Install: pip install -r requirements.txt
 
 # Core API

@@ -1,8 +1,8 @@
 @echo off
-title Alpha Foundry — Launcher
+title Fountry — Launcher
 echo.
 echo  ╔═══════════════════════════════════════╗
-echo  ║      QUANT ALPHA FOUNDRY v2.1         ║
+echo  ║           FOUNTRY v2.1                ║
 echo  ║  yfinance + FRED + SEC EDGAR (free)   ║
 echo  ╚═══════════════════════════════════════╝
 echo.
@@ -23,7 +23,7 @@ echo      Syncing Python dependencies...
 pip install -r requirements.txt --quiet
 
 :: Launch backend in a new window
-start "Alpha Foundry — Backend" cmd /k "cd /d %~dp0backend && .venv\Scripts\activate.bat && uvicorn main:app --port 8000 --reload"
+start "Fountry — Backend" cmd /k "cd /d %~dp0backend && .venv\Scripts\activate.bat && uvicorn main:app --port 8000 --reload"
 
 :: ── 2. Install frontend deps if needed ────────────────────────────────────
 echo [2/3] Checking frontend dependencies...

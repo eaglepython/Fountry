@@ -60,7 +60,7 @@
 
 ## ◈ Overview
 
-**Quant Alpha Foundry** is a full-stack quantitative research platform that mirrors the internal tooling used at institutional asset managers. It covers the complete alpha lifecycle — from raw signal research and walk-forward validation, through regime stress-testing and execution analytics, to live paper trading with autonomous agents.
+**Fountry** is a full-stack quantitative research platform that mirrors the internal tooling used at institutional asset managers. It covers the complete alpha lifecycle — from raw signal research and walk-forward validation, through regime stress-testing and execution analytics, to live paper trading with autonomous agents.
 
 Everything runs **free with no API keys required** for core functionality. Market data comes from `yfinance`, macro signals from the Federal Reserve's public FRED API, and accounting signals from SEC EDGAR filings.
 

@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 const API_BASE = import.meta.env?.VITE_API_URL || "http://localhost:8000";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// QUANT ALPHA FOUNDRY — Institutional-Grade Alpha Research & Execution Platform
+// FOUNTRY — Institutional-Grade Alpha Research & Execution Platform
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── SEEDED PRNG for deterministic "live" data ──────────────────────────────
@@ -1634,7 +1634,7 @@ export default function QuantAlphaFoundry() {
               </div>
             </div>
             <div>
-              <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.2em" }}>ALPHA FOUNDRY</div>
+              <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.2em" }}>FOUNTRY</div>
               <div className="nav-brand-sub" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 8, color: "rgba(201,169,110,0.45)", letterSpacing: "0.2em" }}>INSTITUTIONAL RESEARCH PLATFORM</div>
             </div>
           </div>
@@ -1821,7 +1821,7 @@ export default function QuantAlphaFoundry() {
       <footer style={{ borderTop: "1px solid rgba(201,169,110,0.08)", padding: "16px 40px", marginTop: 60 }}>
         <div style={{ maxWidth: 1400, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(201,169,110,0.4)" }}>
-            ALPHA FOUNDRY v2.0 · {SIGNALS.length} signals researched · {SIGNALS.filter(s => activeMetrics[s.id].promoted).length} promoted · {dataSource === "LIVE" ? "Live data via yfinance" : "Simulated data — start backend for live"}
+            FOUNTRY v2.0 · {SIGNALS.length} signals researched · {SIGNALS.filter(s => activeMetrics[s.id].promoted).length} promoted · {dataSource === "LIVE" ? "Live data via yfinance" : "Simulated data — start backend for live"}
           </div>
           <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.2)" }}>
             IR = IC · √N · Vₜ + rSVₛ + ½σ²S²Vₛₛ = rV
