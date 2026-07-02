@@ -76,7 +76,7 @@ Everything runs **free with no API keys required** for core functionality. Marke
 
 | View | What You Get |
 |:----:|:------------|
-| **⚗ FOUNDRY** | Signal universe command centre — 15 factor signals ranked by IC, ICIR, net Sharpe and capacity. Promoted vs. under-review pipeline. |
+| **⚗ FOUNTRY** | Signal universe command centre — 15 factor signals ranked by IC, ICIR, net Sharpe and capacity. Promoted vs. under-review pipeline. |
 | **🔬 SIGNAL LAB** | Full deep-dive on any signal: 10-year walk-forward OOS results, IC decay curve, regime-conditional performance matrix. |
 | **⚡ STRESS TEST** | Cross-signal performance heatmap across 5 market regimes (Bull, Bear, Crisis, Range-bound, Inflationary). Live FRED macro overlay. |
 | **📋 EXECUTION** | Real-time trade blotter with VWAP slippage, market impact decomposition (VWAP / TWAP / IS), and algo attribution. |
@@ -93,7 +93,7 @@ Everything runs **free with no API keys required** for core functionality. Marke
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      QUANT ALPHA FOUNDRY                        │
+│                          FOUNTRY                                │
 ├─────────────────────────┬───────────────────────────────────────┤
 │      FRONTEND           │           BACKEND                      │
 │  React 18 + Vite 5      │       FastAPI + uvicorn               │

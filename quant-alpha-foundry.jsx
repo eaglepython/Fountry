@@ -182,7 +182,7 @@ const SPY_BENCHMARK_SIM  = generatePriceSeries(252);
 // COMPONENTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const VIEWS = ["FOUNDRY", "SIGNAL LAB", "STRESS TEST", "EXECUTION", "PORTFOLIO", "AGENTS"];
+const VIEWS = ["FOUNTRY", "SIGNAL LAB", "STRESS TEST", "EXECUTION", "PORTFOLIO", "AGENTS"];
 
 function sparkColor(val) {
   if (val === undefined || val === null) return "#888";
@@ -1407,7 +1407,7 @@ function AgentsDashboard({ agentData, apiBase }) {
 }
 
 export default function QuantAlphaFoundry() {
-  const [activeView, setActiveView] = useState("FOUNDRY");
+  const [activeView, setActiveView] = useState("FOUNTRY");
   const [selectedSignal, setSelectedSignal] = useState(SIGNALS[0]);
   const [tick, setTick] = useState(0);
 
@@ -1703,7 +1703,7 @@ export default function QuantAlphaFoundry() {
       {/* MAIN CONTENT */}
       <main style={{ position: "relative", zIndex: 1 }}>
         <div className="fade-in" key={activeView}>
-          {activeView === "FOUNDRY"     && <FoundryOverview onSelectSignal={handleSelectSignal} metrics={activeMetrics}/>}
+          {activeView === "FOUNTRY"     && <FoundryOverview onSelectSignal={handleSelectSignal} metrics={activeMetrics}/>}
           {activeView === "SIGNAL LAB"  && <SignalLab signal={selectedSignal} metrics={activeMetrics}/>}
           {activeView === "STRESS TEST" && <StressTest metrics={activeMetrics} macroSignals={macroSignals}/>}
           {activeView === "EXECUTION"   && <ExecutionDashboard/>}

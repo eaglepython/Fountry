@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
     global macro_engine, accounting_engine
     global execution_agent, commentary_agent
 
-    log.info("🚀 Alpha Foundry v2.1 starting…")
+    log.info("🚀 Fountry v2.1 starting…")
     loop = asyncio.get_event_loop()
 
     # ── 1. Market prices (yfinance) ─────────────────────────────────────────
