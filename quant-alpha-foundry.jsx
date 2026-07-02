@@ -1079,7 +1079,7 @@ function AgentsDashboard({ agentData, apiBase }) {
         setModeSwitchMsg({ ok: true, text: `Circuit breaker reset — NAV anchor: $${data.nav?.toLocaleString()}` });
         // Refresh state
         const s = await fetch(`${apiBase}/api/agents/execution/state`);
-        if (s.ok) setLocalAgent(prev => ({ ...prev, execution: await s.json() }));
+        if (s.ok) { const state = await s.json(); setLocalAgent(prev => ({ ...prev, execution: state })); }
       }
     } catch { setModeSwitchMsg({ ok: false, text: "Reset failed" }); }
     setTimeout(() => setModeSwitchMsg(null), 5000);
@@ -1662,25 +1662,25 @@ export default function QuantAlphaFoundry() {
           {/* Spacer */}
           <div style={{ flex: 1 }}/>
 
-          {/* Right: data source badge + live ticker */}
+          {/* Right: data source + live ticker */}
           <div className="nav-ticker" style={{ display: "flex", alignItems: "center", gap: 20, flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               {dataSource === "LIVE" && <span className="live-dot"/>}
               <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, letterSpacing: "0.12em",
                 color: dataSource === "LIVE" ? "#4ade80" : "rgba(201,169,110,0.45)" }}>
-                {isComputing ? "COMPUTING…" : dataSource}
+                {isComputing ? "COMPUTING..." : dataSource}
               </span>
             </div>
             <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "rgba(232,224,208,0.5)" }}>
               SPX <span style={{ color: "#c9a96e" }}>{livePrice}</span>
             </div>
             <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
-              P&amp;L <span style={{ color: "#4ade80" }}>+{tickerPnl}%</span>
+              P&L <span style={{ color: "#4ade80" }}>+{tickerPnl}%</span>
             </div>
           </div>
 
           {/* Mobile hamburger */}
-          <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(o => !o)}>☰</button>
+          <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(o => !o)}>{"☰"}</button>
         </div>
 
         {/* Mobile nav dropdown */}
@@ -1711,120 +1711,14 @@ export default function QuantAlphaFoundry() {
           {activeView === "AGENTS"      && <AgentsDashboard agentData={agentData} apiBase={API_BASE}/>}
         </div>
       </main>
-    </div>
-  );
-}
-          </div>
 
-          {/* Desktop Nav Tabs */}
-          <div className="nav-tabs-desktop" style={{ display: "flex", flex: 1, gap: 2 }}>
-            {VIEWS.map(v => (
-              <button key={v} onClick={() => setActiveView(v)} style={{
-                padding: "8px 18px", border: "none",
-                background: activeView === v ? "rgba(201,169,110,0.12)" : "transparent",
-                color: activeView === v ? "#c9a96e" : "rgba(232,224,208,0.35)",
-                fontFamily: "JetBrains Mono, monospace", fontSize: 11, letterSpacing: "0.12em",
-                borderBottom: activeView === v ? "2px solid #c9a96e" : "2px solid transparent",
-                transition: "all 0.15s",
-              }}
-              onMouseEnter={e => { if (activeView !== v) e.currentTarget.style.color = "rgba(232,224,208,0.7)"; }}
-              onMouseLeave={e => { if (activeView !== v) e.currentTarget.style.color = "rgba(232,224,208,0.35)"; }}
-              >{v}</button>
-            ))}
-          </div>
-
-          {/* Hamburger button (mobile only) */}
-          <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(o => !o)} style={{ marginLeft: "auto" }}>
-            {mobileMenuOpen ? "✕" : "☰"}
-          </button>
-
-          {/* Live Ticker + Data Source */}
-          <div className="nav-ticker" style={{ display: "flex", gap: 20, alignItems: "center", fontFamily: "JetBrains Mono, monospace", fontSize: 11, flexShrink: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 14px", background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 2 }}>
-              <span className="live-dot"/>
-              <span style={{ color: "rgba(232,224,208,0.5)" }}>PNL</span>
-              <span style={{ color: "#4ade80" }}>+{tickerPnl}%</span>
-            </div>
-            <div style={{ color: "rgba(232,224,208,0.3)" }}>SPX <span style={{ color: "#c9a96e" }}>{livePrice}</span></div>
-            <Badge
-              text={dataSource}
-              color={dataSource === "LIVE" ? "#4ade80" : "#facc15"}
-            />
-          </div>
-        </div>
-      </nav>
-
-      {/* Mobile Nav Drawer */}
-      <div className={`nav-tabs-mobile${mobileMenuOpen ? " open" : ""}`}>
-        {VIEWS.map(v => (
-          <button key={v} className={activeView === v ? "active-tab" : ""}
-            onClick={() => { setActiveView(v); setMobileMenuOpen(false); }}
-            style={{
-              padding: "12px 24px", border: "none", borderLeft: "2px solid transparent",
-              background: activeView === v ? "rgba(201,169,110,0.08)" : "transparent",
-              color: activeView === v ? "#c9a96e" : "rgba(232,224,208,0.5)",
-              fontFamily: "JetBrains Mono, monospace", fontSize: 13, letterSpacing: "0.12em",
-              textAlign: "left", width: "100%",
-            }}>{v}</button>
-        ))}
-      </div>
-
-      {/* Computing banner */}
-      {isComputing && (
-        <div style={{
-          background: "rgba(201,169,110,0.08)", borderBottom: "1px solid rgba(201,169,110,0.15)",
-          padding: "7px 40px", fontFamily: "JetBrains Mono, monospace", fontSize: 10,
-          color: "rgba(201,169,110,0.7)", letterSpacing: "0.12em",
-          display: "flex", alignItems: "center", gap: 8,
-        }}>
-          <span className="live-dot" style={{ background: "#c9a96e" }}/>
-          COMPUTING LIVE SIGNAL METRICS — SHOWING SIMULATED DATA UNTIL READY
-        </div>
-      )}
-
-      {/* Signal Sub-Nav (Signal Lab) */}
-      {activeView === "SIGNAL LAB" && (
-        <div style={{
-          background: "rgba(7,11,18,0.95)", borderBottom: "1px solid rgba(255,255,255,0.06)",
-          padding: "10px 40px", display: "flex", gap: 6, flexWrap: "wrap",
-        }}>
-          {SIGNALS.map(s => {
-            const m = activeMetrics[s.id];
-            return (
-              <button key={s.id} onClick={() => setSelectedSignal(s)} style={{
-                padding: "5px 14px", borderRadius: 2,
-                background: selectedSignal.id === s.id ? "rgba(201,169,110,0.12)" : "transparent",
-                border: `1px solid ${selectedSignal.id === s.id ? "rgba(201,169,110,0.4)" : "rgba(255,255,255,0.07)"}`,
-                color: selectedSignal.id === s.id ? "#c9a96e" : "rgba(232,224,208,0.4)",
-                fontFamily: "JetBrains Mono, monospace", fontSize: 10, letterSpacing: "0.08em",
-                transition: "all 0.15s",
-              }}>
-                <span style={{ marginRight: 6 }}>{s.name}</span>
-                <span style={{ color: m.promoted ? "#4ade80" : "#facc15", fontSize: 8 }}>●</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Main Content */}
-      <main style={{ position: "relative", zIndex: 1 }} className="fade-in" key={activeView + selectedSignal.id}>
-        {activeView === "FOUNDRY"      && <FoundryOverview onSelectSignal={handleSelectSignal} metrics={activeMetrics}/>}
-        {activeView === "SIGNAL LAB"   && <SignalLab signal={selectedSignal} metrics={activeMetrics}/>}
-        {activeView === "STRESS TEST"  && <StressTest metrics={activeMetrics} macroSignals={macroSignals}/>}
-        {activeView === "EXECUTION"    && <ExecutionDashboard/>}
-        {activeView === "PORTFOLIO"    && <PortfolioDashboard pnl={activePnl} benchmark={activeBenchmark}/>}
-        {activeView === "AGENTS"        && <AgentsDashboard agentData={agentData} apiBase={API_BASE}/>}
-      </main>
-
-      {/* Footer */}
       <footer style={{ borderTop: "1px solid rgba(201,169,110,0.08)", padding: "16px 40px", marginTop: 60 }}>
         <div style={{ maxWidth: 1400, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(201,169,110,0.4)" }}>
-            FOUNTRY v2.0 · {SIGNALS.length} signals researched · {SIGNALS.filter(s => activeMetrics[s.id].promoted).length} promoted · {dataSource === "LIVE" ? "Live data via yfinance" : "Simulated data — start backend for live"}
+            FOUNTRY v2.0
           </div>
           <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.2)" }}>
-            IR = IC · √N · Vₜ + rSVₛ + ½σ²S²Vₛₛ = rV
+            IR = IC x sqrt(N)
           </div>
         </div>
       </footer>
