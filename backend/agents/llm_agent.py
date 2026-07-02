@@ -39,6 +39,12 @@ NVIDIA_MODELS = {
     "regime":      os.getenv("NVIDIA_MODEL_REGIME",     "stockmark/stockmark-2-100b-instruct"),
     # Deep signal reasoning — ultra-large reasoning model
     "reasoning":   os.getenv("NVIDIA_MODEL_REASONING",  "nvidia/llama-3.1-nemotron-ultra-253b-v1"),
+    # Macro dissent — second opinion, large general model
+    "dissent":     os.getenv("NVIDIA_MODEL_DISSENT",    "qwen/qwen3.5-397b-a17b"),
+    # Earnings / catalyst watch — finance specialist
+    "earnings":    os.getenv("NVIDIA_MODEL_EARNINGS",   "writer/palmyra-fin-70b-32k"),
+    # Portfolio optimizer — deep reasoning
+    "optimizer":   os.getenv("NVIDIA_MODEL_OPTIMIZER",  "nvidia/llama-3.1-nemotron-ultra-253b-v1"),
     # Fallback / fast inference
     "fast":        os.getenv("NVIDIA_MODEL_FAST",       "meta/llama-3.3-70b-instruct"),
     # General fallback
@@ -83,6 +89,21 @@ def _call_nvidia(prompt: str, task: str = "commentary") -> Optional[str]:
             "You are an expert quantitative researcher. Think step-by-step through complex "
             "financial data, signal interactions, and statistical relationships. "
             "Provide deep analytical reasoning with specific data references."
+        ),
+        "dissent": (
+            "You are a contrarian macro strategist. Your role is to challenge the consensus view "
+            "and identify risks that other analysts miss. Provide a rigorous second opinion on "
+            "the current market regime and signal allocations. Be direct and specific."
+        ),
+        "earnings": (
+            "You are a fundamental analyst specializing in earnings catalysts and corporate events. "
+            "Analyze upcoming earnings, guidance, and corporate actions that could affect "
+            "quantitative signal performance. Focus on timing and magnitude of potential impact."
+        ),
+        "optimizer": (
+            "You are a portfolio optimization expert. Analyze the current portfolio composition, "
+            "signal weights, risk metrics, and macro regime to recommend specific allocation "
+            "adjustments that improve risk-adjusted returns. Be quantitative and specific."
         ),
         "fast": (
             "You are a concise quantitative analyst. Provide brief, accurate financial analysis."
@@ -403,3 +424,119 @@ class LLMCommentaryAgent:
             "commentary": "No report yet. The agent will generate one automatically after data loads.",
             "llm_available": _call_ollama("ping", "llama3") is not None,
         }
+
+    def generate_earnings_alert(self, signal_metrics: list, tickers: List[str],
+                                  regime: str) -> dict:
+        """
+        Scan for upcoming earnings catalysts that could impact signal positions.
+        Uses writer/palmyra-fin-70b-32k (earnings task).
+        """
+        t0 = time.time()
+        promoted = [s for s in signal_metrics if s.get("promoted")]
+        prompt = (
+            f"You are a fundamental analyst. Given these quantitative signal positions:\n"
+            f"Tickers: {', '.join(tickers[:20])}\n"
+            f"Market regime: {regime}\n"
+            f"Promoted signals: {len(promoted)}\n\n"
+            f"Identify: (1) Which of these tickers likely have earnings in the next 2-4 weeks? "
+            f"(2) What is the historical earnings surprise pattern for momentum stocks in a {regime} regime? "
+            f"(3) Which positions should be reduced pre-earnings and which held through? "
+            f"(4) Top 3 risk events to watch this week. "
+            f"Be specific and actionable. 3 paragraphs."
+        )
+        text = _call_llm(prompt, task="earnings")
+        report = {
+            "status":    "ok",
+            "timestamp": datetime.utcnow().isoformat(),
+            "type":      "earnings_alert",
+            "tickers":   tickers[:20],
+            "regime":    regime,
+            "analysis":  text or "Earnings analysis unavailable — NVIDIA API not configured.",
+            "model":     NVIDIA_MODELS["earnings"],
+            "elapsed_s": round(time.time() - t0, 2),
+        }
+        return report
+
+    def generate_macro_dissent(self, regime: str, macro_signals: dict,
+                                signal_metrics: list) -> dict:
+        """
+        Second-opinion contrarian view using qwen3.5-397b-a17b (dissent task).
+        Challenges the current regime classification and signal allocations.
+        """
+        t0 = time.time()
+        macro_str = ""
+        for k, v in macro_signals.items():
+            if isinstance(v, dict):
+                macro_str += f"  {v.get('name', k)}: {v.get('value', '?')} [{v.get('signal', '')}]\n"
+
+        promoted = [s.get("id") or s.get("signal_id", "?") for s in signal_metrics if s.get("promoted")]
+        prompt = (
+            f"You are a contrarian macro strategist. Provide a rigorous second opinion challenging "
+            f"the current market assessment:\n\n"
+            f"Consensus regime: {regime}\n"
+            f"Current long signals: {', '.join(promoted)}\n"
+            f"Macro data:\n{macro_str}\n"
+            f"Challenge: (1) What could make the regime call wrong? "
+            f"(2) What tail risks are being ignored? "
+            f"(3) Which signal allocations are most dangerous if the consensus is wrong? "
+            f"(4) What would you do differently? "
+            f"Be direct and provocative. 3 paragraphs."
+        )
+        text = _call_llm(prompt, task="dissent")
+        report = {
+            "status":    "ok",
+            "timestamp": datetime.utcnow().isoformat(),
+            "type":      "macro_dissent",
+            "regime":    regime,
+            "analysis":  text or "Dissent analysis unavailable — NVIDIA API not configured.",
+            "model":     NVIDIA_MODELS["dissent"],
+            "elapsed_s": round(time.time() - t0, 2),
+        }
+        return report
+
+    def generate_optimizer_recommendation(self, portfolio_state: dict,
+                                           signal_metrics: list,
+                                           macro_signals: dict,
+                                           regime: str) -> dict:
+        """
+        Portfolio optimization recommendations using nvidia/nemotron-ultra-253b-v1.
+        Analyzes current allocations and suggests specific weight adjustments.
+        """
+        t0 = time.time()
+        promoted = [s for s in signal_metrics if s.get("promoted")]
+        positions = portfolio_state.get("positions", {})
+        nav       = portfolio_state.get("nav", 0)
+
+        pos_str = ""
+        for ticker, p in list(positions.items())[:10]:
+            pct = p.get("qty", 0) * p.get("last_price", 0) / nav * 100 if nav else 0
+            pos_str += f"  {ticker}: {pct:.1f}% NAV, PnL={p.get('unrealized_pnl', 0):+.0f}\n"
+
+        sig_str = ""
+        for s in promoted[:5]:
+            sig_str += f"  {s.get('id','?')}: IC={s.get('ic',0):.4f}, Sharpe={s.get('net_sharpe',0):.2f}\n"
+
+        prompt = (
+            f"You are a portfolio optimization expert. Analyze and recommend adjustments:\n\n"
+            f"Regime: {regime}\n"
+            f"NAV: ${nav:,.0f}\n"
+            f"Current positions:\n{pos_str or '  None'}\n"
+            f"Live signals:\n{sig_str or '  None'}\n\n"
+            f"Recommend: (1) Specific allocation % changes for each position. "
+            f"(2) Which signals to increase/decrease weight. "
+            f"(3) Target portfolio metrics (Sharpe, max drawdown, gross exposure). "
+            f"(4) Estimated improvement in risk-adjusted return. "
+            f"Be quantitative — use specific percentages. 4 paragraphs."
+        )
+        text = _call_llm(prompt, task="optimizer")
+        report = {
+            "status":    "ok",
+            "timestamp": datetime.utcnow().isoformat(),
+            "type":      "optimizer",
+            "regime":    regime,
+            "nav":       nav,
+            "analysis":  text or "Optimizer unavailable — NVIDIA API not configured.",
+            "model":     NVIDIA_MODELS["optimizer"],
+            "elapsed_s": round(time.time() - t0, 2),
+        }
+        return report

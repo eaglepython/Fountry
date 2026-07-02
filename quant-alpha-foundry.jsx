@@ -1629,6 +1629,83 @@ export default function QuantAlphaFoundry() {
             </div>
           </div>
 
+          {/* Desktop nav tabs */}
+          <div className="nav-tabs-desktop" style={{ display: "flex", gap: 0 }}>
+            {VIEWS.map(v => (
+              <button key={v}
+                className={activeView === v ? "active-tab" : ""}
+                onClick={() => { setActiveView(v); setMobileMenuOpen(false); }}
+                style={{
+                  padding: "0 18px", height: 56, border: "none",
+                  background: "transparent",
+                  borderBottom: `2px solid ${activeView === v ? "#c9a96e" : "transparent"}`,
+                  color: activeView === v ? "#c9a96e" : "rgba(232,224,208,0.4)",
+                  fontFamily: "JetBrains Mono, monospace", fontSize: 11, letterSpacing: "0.12em",
+                  cursor: "pointer", transition: "all 0.2s",
+                }}
+                onMouseEnter={e => { if (activeView !== v) e.currentTarget.style.color = "rgba(232,224,208,0.75)"; }}
+                onMouseLeave={e => { if (activeView !== v) e.currentTarget.style.color = "rgba(232,224,208,0.4)"; }}
+              >{v}</button>
+            ))}
+          </div>
+
+          {/* Spacer */}
+          <div style={{ flex: 1 }}/>
+
+          {/* Right: data source badge + live ticker */}
+          <div className="nav-ticker" style={{ display: "flex", alignItems: "center", gap: 20, flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {dataSource === "LIVE" && <span className="live-dot"/>}
+              <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, letterSpacing: "0.12em",
+                color: dataSource === "LIVE" ? "#4ade80" : "rgba(201,169,110,0.45)" }}>
+                {isComputing ? "COMPUTING…" : dataSource}
+              </span>
+            </div>
+            <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "rgba(232,224,208,0.5)" }}>
+              SPX <span style={{ color: "#c9a96e" }}>{livePrice}</span>
+            </div>
+            <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
+              P&amp;L <span style={{ color: "#4ade80" }}>+{tickerPnl}%</span>
+            </div>
+          </div>
+
+          {/* Mobile hamburger */}
+          <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(o => !o)}>☰</button>
+        </div>
+
+        {/* Mobile nav dropdown */}
+        <div className={`nav-tabs-mobile${mobileMenuOpen ? " open" : ""}`}>
+          {VIEWS.map(v => (
+            <button key={v}
+              className={activeView === v ? "active-tab" : ""}
+              onClick={() => { setActiveView(v); setMobileMenuOpen(false); }}
+              style={{
+                border: "none", background: "transparent",
+                color: activeView === v ? "#c9a96e" : "rgba(232,224,208,0.5)",
+                fontFamily: "JetBrains Mono, monospace", fontSize: 12, letterSpacing: "0.1em",
+                cursor: "pointer",
+              }}
+            >{v}</button>
+          ))}
+        </div>
+      </nav>
+
+      {/* MAIN CONTENT */}
+      <main style={{ position: "relative", zIndex: 1 }}>
+        <div className="fade-in" key={activeView}>
+          {activeView === "FOUNDRY"     && <FoundryOverview onSelectSignal={handleSelectSignal} metrics={activeMetrics}/>}
+          {activeView === "SIGNAL LAB"  && <SignalLab signal={selectedSignal} metrics={activeMetrics}/>}
+          {activeView === "STRESS TEST" && <StressTest metrics={activeMetrics} macroSignals={macroSignals}/>}
+          {activeView === "EXECUTION"   && <ExecutionDashboard/>}
+          {activeView === "PORTFOLIO"   && <PortfolioDashboard pnl={activePnl} benchmark={activeBenchmark}/>}
+          {activeView === "AGENTS"      && <AgentsDashboard agentData={agentData} apiBase={API_BASE}/>}
+        </div>
+      </main>
+    </div>
+  );
+}
+          </div>
+
           {/* Desktop Nav Tabs */}
           <div className="nav-tabs-desktop" style={{ display: "flex", flex: 1, gap: 2 }}>
             {VIEWS.map(v => (

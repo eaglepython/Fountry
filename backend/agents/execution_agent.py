@@ -27,6 +27,19 @@ ALPACA_BASE      = os.getenv("ALPACA_BASE_URL", ALPACA_LIVE_URL)
 STATE_FILE    = Path("/tmp/alpha_foundry_cache/execution_state.json")
 STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+# Lazy import to avoid circular deps
+_risk_agent = None
+def _get_risk_agent():
+    global _risk_agent
+    if _risk_agent is None:
+        try:
+            from agents.risk_agent import RiskGatekeeperAgent
+            _risk_agent = RiskGatekeeperAgent()
+        except Exception:
+            from risk_agent import RiskGatekeeperAgent
+            _risk_agent = RiskGatekeeperAgent()
+    return _risk_agent
+
 # ── In-memory paper portfolio ─────────────────────────────────────────────────
 
 class PaperPortfolio:
@@ -383,6 +396,23 @@ class ExecutionAgent:
                 diff_qty     = target_qty - current_qty
 
                 if diff_qty > 0:
+                    # ── Risk Gatekeeper pre-trade check ──────────────────
+                    try:
+                        risk = _get_risk_agent().evaluate(
+                            ticker=ticker, side="BUY", qty=diff_qty, price=price,
+                            nav=nav, nav_open=self.paper._nav_open,
+                            positions=self.paper.positions,
+                            regime=getattr(self, "_last_regime", "unknown"),
+                            macro_score=getattr(self, "_last_macro_score", 0.0),
+                        )
+                        if risk["decision"] == "REJECT":
+                            log.warning(f"RiskGatekeeper REJECTED {ticker}: {risk.get('reasons')}")
+                            continue
+                        if risk["decision"] == "REDUCE_SIZE":
+                            diff_qty = max(1, risk.get("qty", diff_qty))
+                    except Exception as re:
+                        log.warning(f"RiskGatekeeper error (proceeding): {re}")
+                    # ─────────────────────────────────────────────────────
                     trade = self.paper.fill(ticker, "BUY", diff_qty, price, target["signal"])
                     if trade:
                         actions.append({**trade, "reason": "ENTER/INCREASE"})
