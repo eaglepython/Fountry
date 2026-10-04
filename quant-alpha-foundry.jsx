@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API_BASE = import.meta.env?.VITE_API_URL || "http://localhost:8000";
+const API_BASE = (import.meta.env?.VITE_API_URL || (import.meta.env?.PROD ? "" : "http://localhost:8000"))
+  .trim()
+  .replace(/\/+$/, "");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FOUNTRY — Institutional-Grade Alpha Research & Execution Platform
@@ -1152,7 +1154,9 @@ function AgentsDashboard({ agentData, apiBase }) {
         )}
         {!localAgent && (
           <div style={{ marginTop: 12, padding: "10px 16px", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)", borderRadius: 4, ...mono, fontSize: 11, color: "rgba(248,113,113,0.8)" }}>
-            ⚠ Backend not connected — start the backend to activate agents
+            {apiBase
+              ? `⚠ Backend not connected at ${apiBase} — check that this API URL is deployed and reachable.`
+              : "⚠ Production API URL is not configured. Set VITE_API_URL to your deployed backend URL and rebuild the frontend."}
           </div>
         )}
       </div>
@@ -1379,9 +1383,14 @@ function AgentsDashboard({ agentData, apiBase }) {
             {sched?.running ? "RUNNING" : sched ? "STOPPED" : "OFFLINE"}
           </span>
         </div>
-        {!sched?.apscheduler && (
+        {sched && !sched.apscheduler && (
           <div style={{ padding: "8px 12px", background: "rgba(250,204,21,0.06)", border: "1px solid rgba(250,204,21,0.2)", borderRadius: 4, ...mono, fontSize: 11, color: "rgba(250,204,21,0.7)", marginBottom: 14 }}>
             APScheduler not installed. Run: <code>pip install apscheduler</code> then restart.
+          </div>
+        )}
+        {!sched && (
+          <div style={{ padding: "8px 12px", background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.2)", borderRadius: 4, ...mono, fontSize: 11, color: "rgba(248,113,113,0.7)", marginBottom: 14 }}>
+            Scheduler status unavailable because the backend is not connected.
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
@@ -1535,6 +1544,7 @@ export default function QuantAlphaFoundry() {
   useEffect(() => {
     async function fetchLive() {
       try {
+        if (!API_BASE) return;
         // Render free tier cold-starts take up to 50s — use generous timeout + retry
         let healthRes;
         for (let attempt = 0; attempt < 3; attempt++) {

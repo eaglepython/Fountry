@@ -142,6 +142,8 @@ Bootstraps the Python venv, installs all dependencies, and launches both servers
 
 **Agent controls require a backend token.** Set `AGENT_CONTROL_TOKEN` in `backend/.env` to a random secret with at least 32 characters, then enter the same value in the Agents dashboard. The dashboard keeps it in page memory only. On Render, set the `AGENT_CONTROL_TOKEN` environment variable in the service settings. Mutating agent endpoints reject missing or invalid tokens. CORS is limited to the configured origins.
 
+For the deployed frontend, set Netlify's `VITE_API_URL` build environment variable to the public URL of the Python API service (for example, `https://your-api-service.onrender.com`), then trigger a new frontend deploy. Production builds do not fall back to `localhost`, which would point to each visitor's own computer. The commentary and risk agents call hosted model APIs; set `NVIDIA_API_KEY` or `GROQ_API_KEY` on the backend to enable those providers. No model weights are bundled in the frontend.
+
 Alpaca always starts in paper mode by default. To permit switching to live trading, explicitly set `ALPACA_LIVE_TRADING_ENABLED=true` on the backend. Keep it `false` for paper trading.
 
 **1 — Backend**
