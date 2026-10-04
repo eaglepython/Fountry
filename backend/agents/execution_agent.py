@@ -12,7 +12,7 @@ Risk controls:
   - Stop-loss: -2% per position
   - Daily drawdown circuit-breaker: -3% NAV
 """
-import os, json, logging, time
+import os, json, logging, time, threading
 from datetime import datetime, date
 from typing import Dict, List, Optional
 from pathlib import Path
@@ -22,7 +22,11 @@ log = logging.getLogger(__name__)
 
 ALPACA_LIVE_URL  = "https://api.alpaca.markets"
 ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
-ALPACA_BASE      = os.getenv("ALPACA_BASE_URL", ALPACA_LIVE_URL)
+LIVE_TRADING_ENABLED = os.getenv("ALPACA_LIVE_TRADING_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+ALPACA_BASE      = os.getenv("ALPACA_BASE_URL", ALPACA_PAPER_URL)
+if ALPACA_BASE == ALPACA_LIVE_URL and not LIVE_TRADING_ENABLED:
+    log.warning("Live Alpaca URL configured while live trading is disabled; using paper endpoint")
+    ALPACA_BASE = ALPACA_PAPER_URL
 
 STATE_FILE    = Path("/tmp/alpha_foundry_cache/execution_state.json")
 STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -79,6 +83,10 @@ class PaperPortfolio:
         else:  # SELL / SHORT
             if ticker in self.positions:
                 p = self.positions[ticker]
+                qty = min(qty, p["qty"])
+                if qty <= 0:
+                    return None
+                cost = qty * price
                 proceeds = qty * price
                 pnl = (price - p["avg_cost"]) * qty
                 self.cash += proceeds
@@ -152,6 +160,8 @@ class AlpacaClient:
 
     def switch(self, mode: str):
         """Hot-switch between 'live' and 'paper' without restarting."""
+        if mode == "live" and not LIVE_TRADING_ENABLED:
+            raise ValueError("Live trading is disabled; set ALPACA_LIVE_TRADING_ENABLED=true to enable it")
         self.base_url = ALPACA_PAPER_URL if mode == "paper" else ALPACA_LIVE_URL
         log.info(f"Alpaca switched to {self.mode} → {self.base_url}")
 
@@ -171,7 +181,7 @@ class AlpacaClient:
             return None
         try:
             import requests
-            r = requests.post(f"{ALPACA_BASE}{path}", json=body, headers=self._headers, timeout=5)
+            r = requests.post(f"{self.base_url}{path}", json=body, headers=self._headers, timeout=5)
             if r.ok:
                 return r.json()
             else:
@@ -231,6 +241,7 @@ class ExecutionAgent:
         self.last_cycle   = None
         self.cycle_log: List[dict] = []
         self.status       = "IDLE"
+        self._run_lock    = threading.Lock()
         self._load_state()
         log.info(f"ExecutionAgent init — alpaca_mode: {self.alpaca.mode}, enabled: {self.alpaca.enabled}")
 
@@ -247,8 +258,12 @@ class ExecutionAgent:
                     state = json.load(f)
                 self.paper.cash = state.get("cash", self.paper.cash)
                 self.paper.trades = state.get("trades", [])
+                self.paper.positions = state.get("positions", {})
+                self.paper.initial_cash = state.get("initial_cash", self.paper.initial_cash)
+                self.paper._nav_open = state.get("nav_open", self.paper.nav)
                 # Sync _nav_open so circuit breaker doesn't trip immediately on restart
-                self.paper._nav_open = self.paper.nav
+                if "nav_open" not in state:
+                    self.paper._nav_open = self.paper.nav
                 log.info(f"Loaded execution state: NAV=${self.paper.nav:,.0f}")
         except Exception:
             pass
@@ -256,7 +271,13 @@ class ExecutionAgent:
     def _save_state(self):
         try:
             with open(STATE_FILE, "w") as f:
-                json.dump({"cash": self.paper.cash, "trades": self.paper.trades[-200:]}, f)
+                json.dump({
+                    "cash": self.paper.cash,
+                    "initial_cash": self.paper.initial_cash,
+                    "nav_open": self.paper._nav_open,
+                    "positions": self.paper.positions,
+                    "trades": self.paper.trades[-200:],
+                }, f)
         except Exception:
             pass
 
@@ -341,7 +362,7 @@ class ExecutionAgent:
         4. Execute diffs
         Returns a cycle summary dict.
         """
-        if self.is_running:
+        if not self._run_lock.acquire(blocking=False):
             return {"status": "ALREADY_RUNNING"}
 
         self.is_running = True
@@ -411,7 +432,8 @@ class ExecutionAgent:
                         if risk["decision"] == "REDUCE_SIZE":
                             diff_qty = max(1, risk.get("qty", diff_qty))
                     except Exception as re:
-                        log.warning(f"RiskGatekeeper error (proceeding): {re}")
+                        log.error(f"RiskGatekeeper error (trade rejected): {re}")
+                        continue
                     # ─────────────────────────────────────────────────────
                     trade = self.paper.fill(ticker, "BUY", diff_qty, price, target["signal"])
                     if trade:
@@ -451,6 +473,7 @@ class ExecutionAgent:
             return {"status": "ERROR", "message": str(e)}
         finally:
             self.is_running = False
+            self._run_lock.release()
 
     def get_state(self) -> dict:
         state = self.paper.to_dict()

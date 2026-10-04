@@ -15,7 +15,7 @@ Set environment variables in .env:
   NVIDIA_API_KEY=nvapi-...
   NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 """
-import os, logging, time, json
+import os, logging, time, json, threading
 from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
@@ -326,6 +326,7 @@ class LLMCommentaryAgent:
     def __init__(self):
         self.last_report:  Optional[dict] = None
         self.is_generating = False
+        self._generation_lock = threading.Lock()
         self._load_cache()
 
     def _load_cache(self):
@@ -345,9 +346,11 @@ class LLMCommentaryAgent:
 
     def generate(self, signal_metrics: list, portfolio_perf: dict,
                  regime: str, macro_signals: dict) -> dict:
-        if self.is_generating:
+        if not self._generation_lock.acquire(blocking=False):
             return self.last_report or {"status": "generating"}
-
+        if self.is_generating:
+            self._generation_lock.release()
+            return self.last_report or {"status": "generating"}
         self.is_generating = True
         t0 = time.time()
 
@@ -415,6 +418,7 @@ class LLMCommentaryAgent:
             return {"status": "error", "message": str(e)}
         finally:
             self.is_generating = False
+            self._generation_lock.release()
 
     def get_last(self) -> dict:
         if self.last_report:

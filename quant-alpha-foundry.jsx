@@ -1021,6 +1021,7 @@ function AgentsDashboard({ agentData, apiBase }) {
   const [localAgent, setLocalAgent] = useState(agentData);
   const [switchingMode, setSwitchingMode] = useState(false);
   const [modeSwitchMsg, setModeSwitchMsg] = useState(null);
+  const [controlToken, setControlToken] = useState("");
 
   // Sync prop changes
   useEffect(() => { setLocalAgent(agentData); }, [agentData]);
@@ -1030,28 +1031,32 @@ function AgentsDashboard({ agentData, apiBase }) {
   const commentary = localAgent?.commentary;
 
   // Current mode derived from backend state
-  const currentMode = exec?.alpaca_mode === "PAPER" ? "paper" : "live";
+  const currentMode = !exec?.alpaca_enabled || exec?.alpaca_mode === "PAPER" ? "paper" : "live";
+  const hasControlToken = Boolean(controlToken.trim());
+  const runControl = async (path) => {
+    const response = await fetch(`${apiBase}${path}`, {
+      method: "POST",
+      headers: { "X-Agent-Control-Token": controlToken.trim() },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+    return data;
+  };
 
   const switchMode = async (newMode) => {
     if (switchingMode) return;
     setSwitchingMode(true);
     setModeSwitchMsg(null);
     try {
-      const r = await fetch(`${apiBase}/api/agents/execution/mode/${newMode}`, { method: "POST" });
-      const data = await r.json();
-      if (r.ok) {
-        setModeSwitchMsg({ ok: true, text: `Switched to ${newMode.toUpperCase()} trading` });
-        // Refresh agent state
-        const s = await fetch(`${apiBase}/api/agents/execution/state`);
-        if (s.ok) {
-          const state = await s.json();
-          setLocalAgent(prev => ({ ...prev, execution: state }));
-        }
-      } else {
-        setModeSwitchMsg({ ok: false, text: data.detail || "Switch failed" });
+      await runControl(`/api/agents/execution/mode/${newMode}`);
+      setModeSwitchMsg({ ok: true, text: `Switched to ${newMode.toUpperCase()} trading` });
+      const s = await fetch(`${apiBase}/api/agents/execution/state`);
+      if (s.ok) {
+        const state = await s.json();
+        setLocalAgent(prev => ({ ...prev, execution: state }));
       }
     } catch (e) {
-      setModeSwitchMsg({ ok: false, text: "Backend unreachable" });
+      setModeSwitchMsg({ ok: false, text: e.message || "Backend unreachable" });
     }
     setSwitchingMode(false);
     setTimeout(() => setModeSwitchMsg(null), 4000);
@@ -1060,34 +1065,40 @@ function AgentsDashboard({ agentData, apiBase }) {
   const triggerJob = async (jobId) => {
     setRunningJob(jobId);
     try {
-      await fetch(`${apiBase}/api/agents/scheduler/trigger/${jobId}`, { method: "POST" });
-    } catch {}
+      const result = await runControl(`/api/agents/scheduler/trigger/${jobId}`);
+      setModeSwitchMsg({ ok: true, text: result.status === "triggered" ? `${jobId} started` : result.message || "Job started" });
+    } catch (e) { setModeSwitchMsg({ ok: false, text: e.message || "Could not start job" }); }
     setTimeout(() => setRunningJob(null), 3000);
   };
 
   const triggerExecution = async () => {
     setRunningJob("execution");
-    try { await fetch(`${apiBase}/api/agents/execution/run`, { method: "POST" }); } catch {}
+    try {
+      const result = await runControl("/api/agents/execution/run");
+      setModeSwitchMsg({ ok: true, text: result.message || result.status });
+    } catch (e) { setModeSwitchMsg({ ok: false, text: e.message || "Could not start execution" }); }
     setTimeout(() => setRunningJob(null), 5000);
   };
 
   const resetCircuitBreaker = async () => {
     try {
-      const r = await fetch(`${apiBase}/api/agents/execution/reset`, { method: "POST" });
-      if (r.ok) {
-        const data = await r.json();
-        setModeSwitchMsg({ ok: true, text: `Circuit breaker reset — NAV anchor: $${data.nav?.toLocaleString()}` });
-        // Refresh state
-        const s = await fetch(`${apiBase}/api/agents/execution/state`);
-        if (s.ok) { const state = await s.json(); setLocalAgent(prev => ({ ...prev, execution: state })); }
+      const data = await runControl("/api/agents/execution/reset");
+      setModeSwitchMsg({ ok: true, text: `Circuit breaker reset — NAV anchor: $${data.nav?.toLocaleString()}` });
+      const s = await fetch(`${apiBase}/api/agents/execution/state`);
+      if (s.ok) {
+        const state = await s.json();
+        setLocalAgent(prev => ({ ...prev, execution: state }));
       }
-    } catch { setModeSwitchMsg({ ok: false, text: "Reset failed" }); }
+    } catch (e) { setModeSwitchMsg({ ok: false, text: e.message || "Reset failed" }); }
     setTimeout(() => setModeSwitchMsg(null), 5000);
   };
 
   const triggerCommentary = async () => {
     setRunningJob("commentary");
-    try { await fetch(`${apiBase}/api/agents/commentary/generate`, { method: "POST" }); } catch {}
+    try {
+      const result = await runControl("/api/agents/commentary/generate");
+      setModeSwitchMsg({ ok: true, text: result.message || result.status });
+    } catch (e) { setModeSwitchMsg({ ok: false, text: e.message || "Could not generate commentary" }); }
     setTimeout(() => setRunningJob(null), 15000);
   };
 
@@ -1100,13 +1111,13 @@ function AgentsDashboard({ agentData, apiBase }) {
     return <span style={{ ...mono, fontSize: 11, color: colors[status] || "rgba(232,224,208,0.5)", padding: "2px 8px", border: `1px solid ${colors[status] || "rgba(255,255,255,0.1)"}22`, borderRadius: 2 }}>{status || "UNKNOWN"}</span>;
   };
 
-  const BtnRun = ({ label, onClick, active }) => (
-    <button onClick={onClick} disabled={active} style={{
+  const BtnRun = ({ label, onClick, active, disabled = false }) => (
+    <button onClick={onClick} disabled={active || disabled} style={{
       padding: "6px 16px", borderRadius: 2,
       border: `1px solid ${active ? "rgba(201,169,110,0.3)" : "#c9a96e"}`,
       background: active ? "rgba(201,169,110,0.05)" : "rgba(201,169,110,0.12)",
-      color: active ? "rgba(201,169,110,0.4)" : "#c9a96e",
-      ...mono, fontSize: 11, cursor: active ? "wait" : "pointer", letterSpacing: "0.08em",
+      color: active || disabled ? "rgba(201,169,110,0.4)" : "#c9a96e",
+      ...mono, fontSize: 11, cursor: active ? "wait" : disabled ? "not-allowed" : "pointer", letterSpacing: "0.08em",
     }}>{active ? "RUNNING…" : label}</button>
   );
 
@@ -1117,6 +1128,28 @@ function AgentsDashboard({ agentData, apiBase }) {
         <p style={{ fontFamily: "Cormorant Garamond, serif", fontSize: 15, color: "rgba(232,224,208,0.5)", margin: 0 }}>
           Execution bot · AI commentary engine · Background data scheduler
         </p>
+        <div style={{ marginTop: 12, padding: "12px 14px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(201,169,110,0.12)", borderRadius: 4 }}>
+          <label htmlFor="agent-control-token" style={{ display: "block", ...mono, fontSize: 9, color: "rgba(232,224,208,0.55)", letterSpacing: "0.1em", marginBottom: 7 }}>
+            AGENT CONTROL TOKEN · REQUIRED FOR ACTIONS
+          </label>
+          <input
+            id="agent-control-token"
+            type="password"
+            autoComplete="off"
+            value={controlToken}
+            onChange={event => setControlToken(event.target.value)}
+            placeholder="Enter the backend AGENT_CONTROL_TOKEN"
+            style={{ width: "min(100%, 420px)", padding: "8px 10px", color: "#e8e0d0", background: "#070b12", border: "1px solid rgba(201,169,110,0.25)", borderRadius: 3, ...mono, fontSize: 11 }}
+          />
+          <div style={{ marginTop: 6, ...mono, fontSize: 9, color: "rgba(232,224,208,0.35)" }}>
+            The token stays in this page’s memory and is sent only with agent control requests.
+          </div>
+        </div>
+        {modeSwitchMsg && (
+          <div role="status" style={{ marginTop: 8, ...mono, fontSize: 10, color: modeSwitchMsg.ok ? "#4ade80" : "#f87171" }}>
+            {modeSwitchMsg.text}
+          </div>
+        )}
         {!localAgent && (
           <div style={{ marginTop: 12, padding: "10px 16px", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)", borderRadius: 4, ...mono, fontSize: 11, color: "rgba(248,113,113,0.8)" }}>
             ⚠ Backend not connected — start the backend to activate agents
@@ -1177,15 +1210,15 @@ function AgentsDashboard({ agentData, apiBase }) {
             </div>
           )}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <BtnRun label="RUN CYCLE" onClick={triggerExecution} active={runningJob === "execution"} />
+            <BtnRun label="RUN CYCLE" onClick={triggerExecution} active={runningJob === "execution"} disabled={!hasControlToken} />
             {exec?.status === "CIRCUIT_BREAKER" && (
-              <button onClick={resetCircuitBreaker} style={{
+              <button onClick={resetCircuitBreaker} disabled={!hasControlToken} style={{
                 padding: "6px 16px", borderRadius: 2,
                 border: "1px solid rgba(248,113,113,0.6)",
                 background: "rgba(248,113,113,0.1)",
                 color: "#f87171",
                 fontFamily: "JetBrains Mono, monospace", fontSize: 11,
-                cursor: "pointer", letterSpacing: "0.08em",
+                cursor: hasControlToken ? "pointer" : "not-allowed", opacity: hasControlToken ? 1 : 0.5, letterSpacing: "0.08em",
               }}>⚠ RESET CIRCUIT BREAKER</button>
             )}
           </div>
@@ -1211,12 +1244,12 @@ function AgentsDashboard({ agentData, apiBase }) {
 
                   {/* Toggle pill */}
                   <div
-                    onClick={() => !switchingMode && switchMode(currentMode === "live" ? "paper" : "live")}
+                    onClick={() => hasControlToken && !switchingMode && switchMode(currentMode === "live" ? "paper" : "live")}
                     style={{
                       position: "relative", width: 44, height: 22, borderRadius: 11,
                       background: currentMode === "live" ? "rgba(248,113,113,0.25)" : "rgba(74,222,128,0.2)",
                       border: `1px solid ${currentMode === "live" ? "rgba(248,113,113,0.5)" : "rgba(74,222,128,0.4)"}`,
-                      cursor: switchingMode ? "wait" : "pointer",
+                      cursor: switchingMode ? "wait" : hasControlToken ? "pointer" : "not-allowed",
                       transition: "background 0.3s, border-color 0.3s",
                     }}
                   >
@@ -1329,7 +1362,7 @@ function AgentsDashboard({ agentData, apiBase }) {
             }
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <BtnRun label="GENERATE REPORT" onClick={triggerCommentary} active={runningJob === "commentary"} />
+            <BtnRun label="GENERATE REPORT" onClick={triggerCommentary} active={runningJob === "commentary"} disabled={!hasControlToken} />
             {commentary?.timestamp && (
               <span style={{ ...mono, fontSize: 9, color: "rgba(232,224,208,0.25)" }}>{commentary.timestamp}</span>
             )}
@@ -1380,7 +1413,7 @@ function AgentsDashboard({ agentData, apiBase }) {
                 {recentRun?.detail && (
                   <div style={{ ...mono, fontSize: 9, color: "rgba(232,224,208,0.4)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{recentRun.detail}</div>
                 )}
-                <BtnRun label="RUN NOW" onClick={() => triggerJob(job.id)} active={runningJob === job.id} />
+                <BtnRun label="RUN NOW" onClick={() => triggerJob(job.id)} active={runningJob === job.id} disabled={!hasControlToken} />
               </div>
             );
           })}

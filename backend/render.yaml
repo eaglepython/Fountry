@@ -10,3 +10,7 @@ services:
         value: https://fountry.netlify.app
       - key: CACHE_TTL_HOURS
         value: "24"
+      - key: AGENT_CONTROL_TOKEN
+        sync: false
+      - key: ALPACA_LIVE_TRADING_ENABLED
+        value: "false"

@@ -3,10 +3,10 @@ Fountry — FastAPI Backend v2.2
 Serves real signal metrics, walk-forward results, regime labels,
 FRED macro signals, SEC EDGAR accounting signals, and autonomous agents.
 """
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import asyncio, time, logging, math, json
+import asyncio, time, logging, math, json, hmac
 from contextlib import asynccontextmanager
 
 from signals     import SignalEngine
@@ -17,6 +17,7 @@ from cache       import Cache
 from fred_signals   import FREDLoader, MacroSignalEngine
 from edgar_signals  import SECEdgarLoader, AccountingSignalEngine
 from agents import ExecutionAgent, LLMCommentaryAgent, AgentScheduler
+from config import settings
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s | %(levelname)s | %(message)s")
@@ -122,8 +123,18 @@ async def lifespan(app: FastAPI):
     scheduler.stop()
 
 app = FastAPI(title="Fountry API", version="2.1.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"],
-                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS,
+                   allow_credentials=False, allow_methods=["GET", "POST", "OPTIONS"],
+                   allow_headers=["Content-Type", "X-Agent-Control-Token"])
+
+
+async def require_agent_control(x_agent_control_token: str | None = Header(default=None)):
+    """Fail closed unless an operator configured and supplied the control token."""
+    expected = settings.AGENT_CONTROL_TOKEN
+    if len(expected) < 32:
+        raise HTTPException(503, "Agent controls are disabled: configure AGENT_CONTROL_TOKEN with at least 32 characters")
+    if not x_agent_control_token or not hmac.compare_digest(x_agent_control_token, expected):
+        raise HTTPException(401, "Valid X-Agent-Control-Token required")
 
 # ── Health ───────────────────────────────────────────────────────────────────
 @app.get("/health")
@@ -347,7 +358,7 @@ async def get_execution_state():
 
 
 @app.post("/api/agents/execution/run")
-async def run_execution_cycle(background_tasks: BackgroundTasks):
+async def run_execution_cycle(background_tasks: BackgroundTasks, _auth: None = Depends(require_agent_control)):
     """Trigger an immediate rebalance cycle (runs in background)."""
     if not execution_agent:
         raise HTTPException(503, "Execution agent not ready")
@@ -366,15 +377,20 @@ async def run_execution_cycle(background_tasks: BackgroundTasks):
 
 
 @app.post("/api/agents/execution/mode/{mode}")
-async def switch_alpaca_mode(mode: str):
+async def switch_alpaca_mode(mode: str, _auth: None = Depends(require_agent_control)):
     """Switch Alpaca between 'live' and 'paper' trading without restart."""
     if not execution_agent:
         raise HTTPException(503, "Execution agent not ready")
     if mode not in ("live", "paper"):
         raise HTTPException(400, "mode must be 'live' or 'paper'")
+    if mode == "live" and not settings.ALPACA_LIVE_TRADING_ENABLED:
+        raise HTTPException(403, "Live trading is disabled; set ALPACA_LIVE_TRADING_ENABLED=true to enable it")
     if execution_agent.is_running:
         raise HTTPException(409, "Cannot switch mode while a cycle is running")
-    execution_agent.alpaca.switch(mode)
+    try:
+        execution_agent.alpaca.switch(mode)
+    except ValueError as exc:
+        raise HTTPException(403, str(exc)) from exc
     log.info(f"Trading mode switched to {mode.upper()} → {execution_agent.alpaca.base_url}")
     return {
         "status":       "ok",
@@ -385,7 +401,7 @@ async def switch_alpaca_mode(mode: str):
 
 
 @app.post("/api/agents/execution/reset")
-async def reset_circuit_breaker():
+async def reset_circuit_breaker(_auth: None = Depends(require_agent_control)):
     """Reset circuit breaker and re-anchor NAV baseline to current value."""
     if not execution_agent:
         raise HTTPException(503, "Execution agent not ready")
@@ -423,7 +439,7 @@ async def get_latest_commentary():
 
 
 @app.post("/api/agents/commentary/generate")
-async def generate_commentary(background_tasks: BackgroundTasks):
+async def generate_commentary(background_tasks: BackgroundTasks, _auth: None = Depends(require_agent_control)):
     """Trigger a new commentary report (runs in background)."""
     if not commentary_agent:
         raise HTTPException(503, "Commentary agent not ready")
@@ -462,7 +478,7 @@ async def get_scheduler_status():
 
 
 @app.post("/api/agents/scheduler/trigger/{job_id}")
-async def trigger_job(job_id: str, background_tasks: BackgroundTasks):
+async def trigger_job(job_id: str, background_tasks: BackgroundTasks, _auth: None = Depends(require_agent_control)):
     """Manually trigger a scheduler job by ID."""
     job_map = {
         "refresh_prices":      scheduler._job_refresh_prices,

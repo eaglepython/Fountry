@@ -140,6 +140,10 @@ Bootstraps the Python venv, installs all dependencies, and launches both servers
 
 ### ▶ Manual Setup
 
+**Agent controls require a backend token.** Set `AGENT_CONTROL_TOKEN` in `backend/.env` to a random secret with at least 32 characters, then enter the same value in the Agents dashboard. The dashboard keeps it in page memory only. On Render, set the `AGENT_CONTROL_TOKEN` environment variable in the service settings. Mutating agent endpoints reject missing or invalid tokens. CORS is limited to the configured origins.
+
+Alpaca always starts in paper mode by default. To permit switching to live trading, explicitly set `ALPACA_LIVE_TRADING_ENABLED=true` on the backend. Keep it `false` for paper trading.
+
 **1 — Backend**
 ```bash
 cd backend
@@ -151,6 +155,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
+# Add AGENT_CONTROL_TOKEN=<32+ character random secret> to backend/.env
 python -m uvicorn main:app --port 8000 --reload
 ```
 
@@ -297,6 +302,8 @@ Set environment variable:
 ```
 VITE_API_URL=https://your-backend.onrender.com
 ```
+
+If hosting the frontend as a Render Node web service, use build command `npm ci && npm run build` and start command `npm start`. The start script serves the built `dist/` directory on Render's assigned `PORT`.
 
 ### Backend → Render (free tier)
 `backend/render.yaml` is pre-configured. Connect the repo at [render.com](https://render.com) and point the root to `/backend`. Cold starts take ~30s on the free tier.

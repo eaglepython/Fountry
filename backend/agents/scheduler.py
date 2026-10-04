@@ -86,8 +86,9 @@ class AgentScheduler:
         log.info("⏰ Scheduler: recomputing signal metrics…")
         try:
             if self.signal_engine and self.cache:
+                import asyncio
                 self.cache.invalidate("all_signals")
-                signals = self.signal_engine.compute_all_signals()
+                signals = await asyncio.to_thread(self.signal_engine.compute_all_signals)
                 self.cache.set("all_signals", signals, ttl=3600)
                 self._record("recompute_signals", "OK", f"{len(signals)} signals")
         except Exception as e:
@@ -98,8 +99,12 @@ class AgentScheduler:
         log.info("⏰ Scheduler: running execution agent cycle…")
         try:
             if self.execution_agent and self.signal_engine and self.cache:
-                signals = self.cache.get("all_signals") or self.signal_engine.compute_all_signals()
-                result  = self.execution_agent.run_cycle(signals)
+                import asyncio
+                signals = self.cache.get("all_signals") if self.cache else None
+                if not signals:
+                    signals = await asyncio.to_thread(self.signal_engine.compute_all_signals)
+                    self.cache.set("all_signals", signals, ttl=3600)
+                result  = await asyncio.to_thread(self.execution_agent.run_cycle, signals)
                 self._record("execution_cycle", result.get("status", "?"),
                              f"{result.get('n_actions', 0)} actions, NAV=${result.get('nav', 0):,.0f}")
         except Exception as e:
@@ -111,20 +116,28 @@ class AgentScheduler:
         try:
             if (self.commentary_agent and self.signal_engine
                     and self.portfolio_engine and self.regime_detector):
-                signals    = self.cache.get("all_signals") or self.signal_engine.compute_all_signals()
-                port_perf  = self.portfolio_engine.performance()
-                regime     = self.regime_detector.current_regime().get("regime", "bull")
+                import asyncio
+                signals = self.cache.get("all_signals") if self.cache else None
+                if not signals:
+                    signals = await asyncio.to_thread(self.signal_engine.compute_all_signals)
+                    if self.cache:
+                        self.cache.set("all_signals", signals, ttl=3600)
+                port_perf = await asyncio.to_thread(self.portfolio_engine.performance)
+                current_regime = await asyncio.to_thread(self.regime_detector.current_regime)
+                regime = current_regime.get("regime", "bull")
                 macro_data = {}
                 if self.macro_engine:
                     try:
                         macro_data = {
-                            "volatility":   self.macro_engine.volatility_signal(),
-                            "yield_curve":  self.macro_engine.yield_curve_signal(),
-                            "credit_spreads": self.macro_engine.credit_spread_signal(),
+                            "volatility": await asyncio.to_thread(self.macro_engine.volatility_signal),
+                            "yield_curve": await asyncio.to_thread(self.macro_engine.yield_curve_signal),
+                            "credit_spreads": await asyncio.to_thread(self.macro_engine.credit_spread_signal),
                         }
                     except Exception:
                         pass
-                result = self.commentary_agent.generate(signals, port_perf, regime, macro_data)
+                result = await asyncio.to_thread(
+                    self.commentary_agent.generate, signals, port_perf, regime, macro_data
+                )
                 self._record("commentary", result.get("status", "?"),
                              f"source={result.get('source','?')}")
         except Exception as e:
