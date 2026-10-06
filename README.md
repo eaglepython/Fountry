@@ -142,7 +142,7 @@ Bootstraps the Python venv, installs all dependencies, and launches both servers
 
 **Agent controls require a backend token.** Set `AGENT_CONTROL_TOKEN` in `backend/.env` to a random secret with at least 32 characters, then enter the same value in the Agents dashboard. The dashboard keeps it in page memory only. On Render, set the `AGENT_CONTROL_TOKEN` environment variable in the service settings. Mutating agent endpoints reject missing or invalid tokens. CORS is limited to the configured origins.
 
-The deployed frontend defaults to `https://fountry-api.onrender.com`, matching the service name in `render.yaml`. Set Netlify's `VITE_API_URL` build environment variable only if the Python API uses a different public URL, then trigger a frontend deploy. Production builds do not fall back to `localhost`, which would point to each visitor's own computer. The commentary and risk agents call hosted model APIs; set `NVIDIA_API_KEY` or `GROQ_API_KEY` on the backend to enable those providers. No model weights are bundled in the frontend.
+Set Netlify's `VITE_API_URL` build environment variable to the actual public URL of the Python API service, then trigger a frontend deploy. Production builds do not guess a backend hostname or fall back to `localhost`, which would point to each visitor's own computer. The commentary and risk agents call hosted model APIs; set `NVIDIA_API_KEY` or `GROQ_API_KEY` on the backend to enable those providers. No model weights are bundled in the frontend.
 
 Alpaca always starts in paper mode by default. To permit switching to live trading, explicitly set `ALPACA_LIVE_TRADING_ENABLED=true` on the backend. Keep it `false` for paper trading.
 
@@ -302,7 +302,7 @@ npm run build
 ```
 Set environment variable:
 ```
-VITE_API_URL=https://fountry-api.onrender.com
+VITE_API_URL=https://your-api-service.onrender.com
 ```
 
 If hosting the frontend as a Render Node web service, use build command `npm ci && npm run build` and start command `npm start`. The start script serves the built `dist/` directory on Render's assigned `PORT`.
