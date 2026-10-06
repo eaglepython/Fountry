@@ -207,17 +207,13 @@ def _call_llm(prompt: str, task: str = "commentary") -> Optional[str]:
 # ── Template Commentary (always-available fallback) ───────────────────────────
 
 def _template_commentary(context: dict) -> str:
-    """
-    Rule-based commentary generated from signal metrics.
-    Produces realistic analyst-style text without any LLM.
-    """
+    """Report only measured inputs; never fill missing performance with guesses."""
     promoted      = context.get("promoted_signals", [])
     review        = context.get("review_signals", [])
-    avg_ic        = context.get("avg_ic", 0.035)
     top_signal    = context.get("top_signal", {})
     regime        = context.get("regime", "bull")
-    portfolio_ret = context.get("portfolio_return", 12.4)
-    portfolio_sr  = context.get("portfolio_sharpe", 1.4)
+    portfolio_ret = context.get("portfolio_return")
+    portfolio_sr  = context.get("portfolio_sharpe")
     macro         = context.get("macro_summary", {})
 
     regime_desc = {
@@ -226,56 +222,41 @@ def _template_commentary(context: dict) -> str:
         "crisis": "a crisis regime with extreme vol and correlation spikes",
         "range": "a range-bound, mean-reverting environment",
         "inflate": "an inflationary regime with rising rates",
-    }.get(regime, "a mixed market environment")
+    }.get(regime, "unclassified (no validated historical classification available)")
 
-    top_name = top_signal.get("name", "12-1 Momentum")
-    top_ic   = top_signal.get("ic", avg_ic)
-    top_sr   = top_signal.get("net_sharpe", 0.8)
+    top_name = top_signal.get("name")
 
     vix_line = ""
     yc_line  = ""
-    if macro.get("volatility"):
-        vix = macro["volatility"].get("value", 18)
-        vix_signal = macro["volatility"].get("signal", "NORMAL")
-        vix_line = f" VIX at {vix:.1f} ({vix_signal} regime)."
-    if macro.get("yield_curve"):
-        yc = macro["yield_curve"].get("value", 0.3)
-        yc_signal = macro["yield_curve"].get("signal", "NORMAL")
-        yc_line = f" The yield curve reads {yc:+.2f}% ({yc_signal})."
+    if macro.get("volatility") and macro["volatility"].get("value") is not None:
+        vix_line = f" Volatility indicator: {macro['volatility']['value']} ({macro['volatility'].get('signal', 'unclassified')})."
+    if macro.get("yield_curve") and macro["yield_curve"].get("value") is not None:
+        yc_line = f" Yield curve indicator: {macro['yield_curve']['value']} ({macro['yield_curve'].get('signal', 'unclassified')})."
 
     lines = [
         f"## Fountry — Signal Intelligence Report",
         f"*{datetime.utcnow().strftime('%B %d, %Y · %H:%M UTC')} · Auto-generated*",
         "",
         f"### Market Environment",
-        f"Current conditions are consistent with {regime_desc}.{vix_line}{yc_line}",
+        f"Current data indicate {regime_desc}.{vix_line}{yc_line}",
         "",
         f"### Signal Universe",
         f"The research universe contains **{len(promoted) + len(review)} signals**, "
-        f"of which **{len(promoted)} have cleared all promotion gates** (min IC > 0.025, "
-        f"ICIR > 0.40, net Sharpe > 0.50) and are live in the portfolio. "
-        f"{len(review)} signals remain under review.",
+        f"{len(promoted)} signals are approved for execution and {len(review)} are not. "
+        "IC observations alone are exploratory and do not establish profitability.",
         "",
-        f"### Top Signal: {top_name}",
-        f"The highest-ranked signal by IC is **{top_name}** with a mean cross-sectional IC "
-        f"of **{top_ic:.4f}** and a net Sharpe ratio of **{top_sr:.2f}**. "
-        + ("This is statistically significant at the 5% level based on the rolling walk-forward results. "
-           if float(top_ic) > 0.03 else
-           "The signal is marginal and warrants continued monitoring. "),
+        f"### Signal observations",
+        (f"The leading candidate by observed IC is **{top_name}**. Its observed mean IC is "
+         f"{top_signal.get('ic')} across {top_signal.get('n_periods', 0)} periods. This is not an estimate of returns."
+         if top_name else "No signal is approved for execution. Point-in-time histories and after-cost results are unavailable."),
         "",
         f"### Portfolio Performance",
-        f"The live paper portfolio has generated a return of **+{portfolio_ret:.1f}%** "
-        f"with a Sharpe ratio of **{portfolio_sr:.2f}**, "
-        + ("outperforming the SPY benchmark on a risk-adjusted basis. "
-           if portfolio_sr > 1.0 else "in line with target performance. "),
-        f"Position sizing uses Kelly-fractioned ICIR-weighted allocation with a 5% per-name cap.",
+        (f"Portfolio annual return: {portfolio_ret}%; Sharpe: {portfolio_sr}."
+         if portfolio_ret is not None and portfolio_sr is not None
+         else "Portfolio performance is unavailable; no validated after-cost backtest is connected."),
         "",
-        f"### Key Risks",
-        f"- **Regime shift**: Current {regime} classification may revert; signals "
-          f"exhibit regime-conditional performance variation.",
-        f"- **Transaction costs**: High-turnover signals (STREV, EARN_REV) are sensitive "
-          f"to execution quality; TC drag is monitored continuously.",
-        f"- **Capacity**: Aggregate AUM capacity estimated at $2–3B before significant market impact.",
+        f"### Data limitations",
+        "The available IC observations use a present-day ticker universe and are not a point-in-time, after-cost investment backtest.",
         "",
         f"*This report is generated by the Fountry AI agent. "
           f"For research purposes only. Not financial advice.*",
@@ -291,26 +272,26 @@ def _build_prompt(context: dict) -> str:
     regime     = context.get("regime", "bull")
     macro      = context.get("macro_summary", {})
 
-    top_metrics = ""
-    for s in promoted[:5]:
-        top_metrics += f"\n  - {s.get('name','?')}: IC={s.get('ic',0):.4f}, ICIR={s.get('icir',0):.3f}, NetSharpe={s.get('net_sharpe',0):.2f}"
+    top_metrics = "\n".join(
+        f"  - {s.get('name', '?')}: observed IC={s.get('ic')}, periods={s.get('n_periods', 0)}"
+        for s in promoted[:5]
+    ) or "  - none"
 
     macro_str = ""
     for k, v in macro.items():
         if isinstance(v, dict):
             macro_str += f"\n  - {v.get('name', k)}: {v.get('value', '?')} — {v.get('signal', '')}"
 
-    return f"""You are a quantitative analyst writing an internal research note for a systematic hedge fund.
-Write a concise 3-paragraph commentary (200-300 words) covering:
-1. Current market regime and macro backdrop
-2. Signal performance highlights and key risk factors
-3. Portfolio positioning recommendation
+    return f"""Write a concise research status note using only the supplied values.
+Do not invent, estimate, extrapolate, or imply returns, Sharpe, capacity, statistical significance,
+portfolio positions, or profitability. If a value is unavailable, state that it is unavailable.
+Do not recommend or authorize trades. An IC is not a portfolio return.
 
 Data:
 - Current regime: {regime}
 - Promoted signals ({len(promoted)} total):{top_metrics}
 - Macro indicators:{macro_str if macro_str else ' unavailable'}
-- Portfolio return: {context.get('portfolio_return', 0):.1f}%, Sharpe: {context.get('portfolio_sharpe', 0):.2f}
+- Portfolio return: {context.get('portfolio_return')}, Sharpe: {context.get('portfolio_sharpe')}
 
 Tone: institutional, data-driven, concise. No bullet lists in the output — prose only."""
 
@@ -333,7 +314,8 @@ class LLMCommentaryAgent:
         try:
             if COMMENTARY_CACHE.exists():
                 with open(COMMENTARY_CACHE) as f:
-                    self.last_report = json.load(f)
+                    cached = json.load(f)
+                self.last_report = cached if cached.get("schema_version") == 2 else None
         except Exception:
             pass
 
@@ -358,7 +340,7 @@ class LLMCommentaryAgent:
             promoted = [s for s in signal_metrics if s.get("promoted")]
             review   = [s for s in signal_metrics if not s.get("promoted")]
             top = max(promoted, key=lambda s: float(s.get("ic", 0)), default={}) if promoted else {}
-            avg_ic = np.mean([float(s.get("ic", 0)) for s in promoted]) if promoted else 0.03
+            avg_ic = float(np.mean([float(s["ic"]) for s in promoted if s.get("ic") is not None])) if any(s.get("ic") is not None for s in promoted) else None
 
             context = {
                 "promoted_signals":  promoted,
@@ -366,8 +348,8 @@ class LLMCommentaryAgent:
                 "avg_ic":            avg_ic,
                 "top_signal":        top,
                 "regime":            regime,
-                "portfolio_return":  portfolio_perf.get("ann_return", 12.4),
-                "portfolio_sharpe":  portfolio_perf.get("sharpe", 1.4),
+                "portfolio_return":  portfolio_perf.get("ann_return"),
+                "portfolio_sharpe":  portfolio_perf.get("sharpe"),
                 "macro_summary":     macro_signals,
             }
 
@@ -390,6 +372,7 @@ class LLMCommentaryAgent:
                 model_used = "template"
 
             report = {
+                "schema_version": 2,
                 "status":        "ok",
                 "timestamp":     datetime.utcnow().isoformat(),
                 "regime":        regime,
@@ -402,10 +385,10 @@ class LLMCommentaryAgent:
                 "stats": {
                     "n_promoted":  len(promoted),
                     "n_review":    len(review),
-                    "avg_ic":      round(float(avg_ic), 4),
+                    "avg_ic":      round(float(avg_ic), 4) if avg_ic is not None else None,
                     "top_signal":  top.get("name", "—"),
-                    "portfolio_return": portfolio_perf.get("ann_return", 0),
-                    "portfolio_sharpe": portfolio_perf.get("sharpe", 0),
+                    "portfolio_return": portfolio_perf.get("ann_return"),
+                    "portfolio_sharpe": portfolio_perf.get("sharpe"),
                 },
                 "elapsed_s": round(time.time() - t0, 2),
             }

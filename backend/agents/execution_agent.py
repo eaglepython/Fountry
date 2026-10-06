@@ -1,9 +1,9 @@
 """
 Execution Agent — Autonomous paper-trading bot.
 
-Reads promoted signals → sizes positions → executes via Alpaca paper API
-(free at alpaca.markets). Falls back to an in-memory paper portfolio when
-no Alpaca keys are configured.
+Reads validated promoted signals → sizes positions → simulates paper execution.
+Broker integration is opt-in; signal metrics without explicit after-cost
+validation do not produce orders.
 
 Position sizing: equal-weight Kelly-fractioned by signal confidence (ICIR).
 Risk controls:
@@ -16,6 +16,7 @@ import os, json, logging, time, threading
 from datetime import datetime, date
 from typing import Dict, List, Optional
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import numpy as np
 
 log = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class PaperPortfolio:
         self.trades: List[dict] = []
         self.daily_pnl     = 0.0
         self._nav_open     = initial_cash
+        self._nav_open_date = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
 
     @property
     def nav(self) -> float:
@@ -261,6 +263,7 @@ class ExecutionAgent:
                 self.paper.positions = state.get("positions", {})
                 self.paper.initial_cash = state.get("initial_cash", self.paper.initial_cash)
                 self.paper._nav_open = state.get("nav_open", self.paper.nav)
+                self.paper._nav_open_date = state.get("nav_open_date", self.paper._nav_open_date)
                 # Sync _nav_open so circuit breaker doesn't trip immediately on restart
                 if "nav_open" not in state:
                     self.paper._nav_open = self.paper.nav
@@ -275,6 +278,7 @@ class ExecutionAgent:
                     "cash": self.paper.cash,
                     "initial_cash": self.paper.initial_cash,
                     "nav_open": self.paper._nav_open,
+                    "nav_open_date": self.paper._nav_open_date,
                     "positions": self.paper.positions,
                     "trades": self.paper.trades[-200:],
                 }, f)
@@ -285,6 +289,7 @@ class ExecutionAgent:
         """Reset the circuit breaker and re-anchor NAV open to current NAV."""
         self.status = "IDLE"
         self.paper._nav_open = self.paper.nav
+        self.paper._nav_open_date = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
         log.info(f"Circuit breaker reset — NAV anchor: ${self.paper.nav:,.0f}")
         return {"status": "ok", "nav": round(self.paper.nav, 2), "message": "Circuit breaker reset"}
 
@@ -293,7 +298,12 @@ class ExecutionAgent:
         Convert signal metrics → target position weights.
         Only use promoted signals. Size by normalized ICIR confidence.
         """
-        promoted = [s for s in signal_metrics if s.get("promoted")]
+        promoted = [
+            s for s in signal_metrics
+            if s.get("promoted")
+            and s.get("status") == "LIVE_VALIDATED"
+            and s.get("after_cost_validated") is True
+        ]
         if not promoted:
             return {}
 
@@ -380,6 +390,12 @@ class ExecutionAgent:
             self.paper.update_prices(prices)
             nav = self.paper.nav
 
+            # Anchor the loss limit for the full US trading day, not each cycle.
+            market_date = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+            if self.paper._nav_open_date != market_date:
+                self.paper._nav_open = nav
+                self.paper._nav_open_date = market_date
+
             # Circuit breaker
             daily_dd = (nav - self.paper._nav_open) / self.paper._nav_open
             if daily_dd < -self.DD_CIRCUIT_BREAK:
@@ -447,7 +463,6 @@ class ExecutionAgent:
                         if self.alpaca.enabled:
                             self.alpaca.submit_order(ticker, "sell", abs(diff_qty))
 
-            self.paper._nav_open = self.paper.nav
             self._save_state()
             self.last_cycle = datetime.utcnow().isoformat()
             self.status     = "IDLE"

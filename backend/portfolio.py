@@ -1,6 +1,6 @@
 """
-PortfolioEngine — Computes real portfolio performance, factor attribution,
-and risk metrics from the promoted signal ensemble.
+PortfolioEngine — Fails closed until a point-in-time, after-cost strategy
+backtest is implemented. It does not report simulated fallback performance.
 """
 import logging
 import warnings
@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 
 BENCHMARK = "SPY"
 
-# ── Fama-French Factor Proxies (using ETFs) ──────────────────────────────────
+# ETF proxies are not used as Fama-French factors; attribution is unavailable.
 FF_PROXIES = {
     "Market": ("SPY", True),
     "Value":  ("VTV", True),   # Value tilt
@@ -34,96 +34,12 @@ class PortfolioEngine:
         self._build_portfolio()
 
     def _build_portfolio(self):
-        """
-        Construct a simulated equal-risk-weighted long-short portfolio
-        from promoted signals. This is the core 'live' backtest.
-        """
-        try:
-            log.info("Building portfolio simulation...")
-            rm = self.dl.get_returns_matrix(lookback=252 * 3)
-            if rm.empty or len(rm.columns) < 5:
-                self._use_fallback_portfolio()
-                return
-
-            # Monthly rebalancing
-            rebal_dates = rm.index[::21]
-            portfolio_rets = []
-            dates_used = []
-
-            promoted_signals = ["MOM12_1", "LOW_VOL", "QUAL_ROE", "COMBO_QVM"]
-
-            for i, date in enumerate(rebal_dates[:-2]):
-                # Compute composite score
-                scores = {}
-                for sid in promoted_signals:
-                    s = self.se._get_signal(sid)
-                    if s.empty:
-                        continue
-                    for ticker, val in s.items():
-                        if ticker in rm.columns:
-                            scores[ticker] = scores.get(ticker, 0) + val
-
-                if not scores:
-                    continue
-
-                score_s = pd.Series(scores)
-                n = min(10, len(score_s) // 4)
-                if n < 3:
-                    continue
-
-                # Long top n, short bottom n
-                longs = score_s.nlargest(n).index.tolist()
-                shorts = score_s.nsmallest(n).index.tolist()
-
-                # Next month returns
-                next_date_idx = rm.index.get_loc(date)
-                end_idx = min(next_date_idx + 21, len(rm) - 1)
-                if end_idx <= next_date_idx:
-                    continue
-
-                fwd_rm = rm.iloc[next_date_idx:end_idx]
-                long_ret = fwd_rm[longs].mean(axis=1).mean()
-                short_ret = fwd_rm[shorts].mean(axis=1).mean()
-                port_ret = (long_ret - short_ret) / 2  # Market-neutral
-
-                portfolio_rets.append(float(port_ret))
-                dates_used.append(date)
-
-            if len(portfolio_rets) < 6:
-                self._use_fallback_portfolio()
-                return
-
-            self._portfolio_returns = pd.Series(portfolio_rets, index=pd.DatetimeIndex(dates_used))
-            log.info(f"✅ Portfolio built: {len(portfolio_rets)} months")
-
-            # Benchmark monthly returns
-            if BENCHMARK in self.dl.returns:
-                bm_ret = self.dl.returns[BENCHMARK]
-                bm_monthly = []
-                for date in dates_used:
-                    idx = bm_ret.index.get_loc(date) if date in bm_ret.index else -1
-                    if idx >= 0:
-                        end = min(idx + 21, len(bm_ret))
-                        bm_monthly.append(float(bm_ret.iloc[idx:end].sum()))
-                    else:
-                        bm_monthly.append(0.0)
-                self._benchmark_returns = pd.Series(bm_monthly, index=pd.DatetimeIndex(dates_used))
-
-        except Exception as e:
-            log.error(f"Portfolio build failed: {e}")
-            self._use_fallback_portfolio()
-
-    def _use_fallback_portfolio(self):
-        """Realistic fallback portfolio if construction fails."""
-        log.warning("Using fallback portfolio simulation")
-        np.random.seed(42)
-        n = 36  # 3 years monthly
-        dates = pd.bdate_range(end=pd.Timestamp.today(), periods=n * 21, freq="BMS")[:n]
-        self._portfolio_returns = pd.Series(
-            np.random.normal(0.008, 0.025, n), index=dates
-        )
-        self._benchmark_returns = pd.Series(
-            np.random.normal(0.007, 0.035, n), index=dates
+        """Fail closed until the strategy has a valid point-in-time backtest."""
+        self._portfolio_returns = None
+        self._benchmark_returns = None
+        self.unavailable_reason = (
+            "Portfolio results are disabled until historical, point-in-time signals, "
+            "survivorship-aware constituents, and execution costs are available."
         )
 
     def performance(self) -> dict:
@@ -132,7 +48,7 @@ class PortfolioEngine:
         bm = self._benchmark_returns
 
         if pr is None or len(pr) == 0:
-            return {"error": "No portfolio data"}
+            return {"status": "unavailable", "reason": self.unavailable_reason}
 
         # Annualize (monthly)
         ann_ret = float(pr.mean() * 12)
@@ -189,7 +105,7 @@ class PortfolioEngine:
         """Fama-French style factor return decomposition."""
         pr = self._portfolio_returns
         if pr is None or len(pr) == 0:
-            return {"attribution": [], "r_squared": None}
+            return {"status": "unavailable", "attribution": [], "r_squared": None}
 
         # Build factor returns matrix
         factor_rets = {}
@@ -199,13 +115,13 @@ class PortfolioEngine:
                 factor_rets[name] = monthly.reindex(pr.index, method="nearest")
 
         if not factor_rets:
-            return self._fallback_attribution()
+            return {"status": "unavailable", "attribution": [], "r_squared": None}
 
         X = pd.DataFrame(factor_rets).dropna()
         y = pr.reindex(X.index).dropna()
         common_idx = X.index.intersection(y.index)
         if len(common_idx) < 10:
-            return self._fallback_attribution()
+            return {"status": "unavailable", "attribution": [], "r_squared": None}
 
         X_aligned = X.loc[common_idx]
         y_aligned = y.loc[common_idx]
@@ -242,28 +158,13 @@ class PortfolioEngine:
             return {"attribution": attribution, "r_squared": round(r2, 3)}
         except Exception as e:
             log.warning(f"Attribution failed: {e}")
-            return self._fallback_attribution()
-
-    def _fallback_attribution(self) -> dict:
-        """Deterministic fallback attribution."""
-        return {
-            "attribution": [
-                {"factor": "Market",              "beta": 0.12, "factor_return": 12.4, "contribution": 1.5},
-                {"factor": "Momentum",            "beta": 0.31, "factor_return": 8.2,  "contribution": 2.5},
-                {"factor": "Value",               "beta": 0.22, "factor_return": 5.6,  "contribution": 1.2},
-                {"factor": "Quality",             "beta": 0.28, "factor_return": 6.8,  "contribution": 1.9},
-                {"factor": "Low Vol",             "beta": 0.15, "factor_return": 4.1,  "contribution": 0.6},
-                {"factor": "Alpha (Idiosyncratic)","beta": None, "factor_return": None, "contribution": 3.1},
-                {"factor": "Transaction Costs",   "beta": None, "factor_return": None, "contribution": -2.1},
-            ],
-            "r_squared": 0.42,
-        }
+            return {"status": "unavailable", "attribution": [], "r_squared": None}
 
     def risk_metrics(self) -> dict:
         """VaR, CVaR, volatility, tracking error."""
         pr = self._portfolio_returns
         if pr is None or len(pr) == 0:
-            return {}
+            return {"status": "unavailable", "reason": self.unavailable_reason}
 
         # Monthly to daily approximate
         daily_approx = pr / 21
@@ -292,51 +193,7 @@ class PortfolioEngine:
         }
 
     def current_holdings(self) -> dict:
-        """Simulated current long-short holdings."""
-        signal_now = self.se._get_signal("COMBO_QVM")
-        if signal_now.empty:
-            return self._fallback_holdings()
+        """No recommended holdings until a strategy passes a real validation gate."""
+        return {"status": "unavailable", "longs": [], "shorts": []}
 
-        n = min(8, len(signal_now) // 4)
-        longs = signal_now.nlargest(n)
-        shorts = signal_now.nsmallest(n)
-
-        holdings = {"longs": [], "shorts": []}
-        for ticker, score in longs.items():
-            px = self.dl.prices.get(ticker)
-            ret_1m = float((px.iloc[-1] / px.iloc[-22] - 1) * 100) if px is not None and len(px) >= 22 else 0
-            holdings["longs"].append({
-                "ticker": ticker,
-                "score": round(float(score), 3),
-                "weight": round(100 / n, 1),
-                "return_1m": round(ret_1m, 2),
-            })
-
-        for ticker, score in shorts.items():
-            px = self.dl.prices.get(ticker)
-            ret_1m = float((px.iloc[-1] / px.iloc[-22] - 1) * 100) if px is not None and len(px) >= 22 else 0
-            holdings["shorts"].append({
-                "ticker": ticker,
-                "score": round(float(score), 3),
-                "weight": round(-100 / n, 1),
-                "return_1m": round(ret_1m, 2),
-            })
-
-        return holdings
-
-    def _fallback_holdings(self) -> dict:
-        """Fallback when signal computation fails."""
-        return {
-            "longs": [
-                {"ticker": "NVDA", "score": 1.82, "weight": 12.5, "return_1m": 8.3},
-                {"ticker": "META", "score": 1.64, "weight": 12.5, "return_1m": 5.1},
-                {"ticker": "AVGO", "score": 1.51, "weight": 12.5, "return_1m": 4.2},
-                {"ticker": "LLY",  "score": 1.38, "weight": 12.5, "return_1m": 3.8},
-            ],
-            "shorts": [
-                {"ticker": "INTC", "score": -1.71, "weight": -12.5, "return_1m": -6.2},
-                {"ticker": "BA",   "score": -1.58, "weight": -12.5, "return_1m": -4.1},
-                {"ticker": "XOM",  "score": -1.42, "weight": -12.5, "return_1m": -2.3},
-                {"ticker": "GE",   "score": -1.31, "weight": -12.5, "return_1m": -1.8},
-            ],
-        }
+        return {"status": "unavailable", "longs": [], "shorts": []}

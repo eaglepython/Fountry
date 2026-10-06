@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
 import yfinance as yf
+from fastapi import HTTPException
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -55,7 +56,7 @@ class DataLoader:
         await loop.run_in_executor(None, self._download_prices)
         await loop.run_in_executor(None, self._download_fundamentals)
 
-        self.is_loaded = True
+        self.is_loaded = bool(self.prices)
         self._load_time = time.time() - start
         log.info(f"✅ Data loaded in {self._load_time:.1f}s — {len(self.prices)} tickers")
 
@@ -90,8 +91,7 @@ class DataLoader:
             self._process_prices(closes)
             log.info(f"Downloaded prices: {closes.shape}")
         else:
-            log.warning("No prices downloaded — using fallback")
-            self._use_fallback_prices()
+            log.error("No market prices downloaded; strategy data is unavailable")
 
     def _process_prices(self, closes: pd.DataFrame):
         """Compute returns and store per-ticker series."""
@@ -153,18 +153,6 @@ class DataLoader:
             log.info(f"Downloaded fundamentals: {len(rows)} tickers")
         else:
             self.fundamentals_df = pd.DataFrame()
-
-    def _use_fallback_prices(self):
-        """Generate realistic synthetic prices if download fails."""
-        log.warning("Using fallback synthetic price data")
-        np.random.seed(42)
-        dates = pd.bdate_range(end=datetime.today(), periods=252*3)
-        for i, ticker in enumerate(self.universe[:30]):
-            prices = 100 * np.exp(np.cumsum(
-                np.random.normal(0.0003 + i*0.00001, 0.015, len(dates))
-            ))
-            self.prices[ticker] = pd.Series(prices, index=dates, name=ticker)
-            self.returns[ticker] = self.prices[ticker].pct_change().dropna()
 
     def get_prices(self, ticker: str, period: str = "1y") -> dict:
         """Return OHLCV-style price data for frontend chart."""

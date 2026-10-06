@@ -5,6 +5,7 @@ for every stock. IC is computed against actual forward returns.
 """
 import logging
 import warnings
+from datetime import datetime
 from typing import Dict, List, Optional, Callable
 import pandas as pd
 import numpy as np
@@ -182,11 +183,9 @@ class SignalEngine:
         return cross_sectional_zscore(s)
 
     def _synthetic_fundamental_signal(self, field: str) -> pd.Series:
-        """Fallback: realistic noise-based fundamental signal."""
-        tickers = self.dl.equity_universe[:40]
-        np.random.seed(abs(hash(field)) % 2**31)
-        vals = np.random.normal(0, 1, len(tickers))
-        return pd.Series(dict(zip(tickers, vals)))
+        """Do not invent accounting or analyst data when it is unavailable."""
+        log.warning("Signal %s unavailable: no point-in-time source", field)
+        return pd.Series(dtype=float)
 
     def _get_signal(self, signal_id: str) -> pd.Series:
         """Dispatch to signal constructor."""
@@ -243,17 +242,18 @@ class SignalEngine:
 
         for i, date in enumerate(rebal_dates[:-1]):
             # Signal at date t
-            signal = self._get_signal(signal_id)
+            signal = self._get_signal_at(signal_id, date, rm)
             if signal.empty:
                 continue
 
             # Forward return: date t to t+horizon
             future_idx = rm.index.get_loc(date)
-            future_end_idx = min(future_idx + horizon, len(rm) - 1)
-            if future_end_idx <= future_idx:
+            future_start_idx = future_idx + 1
+            future_end_idx = min(future_idx + horizon + 1, len(rm))
+            if future_end_idx <= future_start_idx:
                 continue
 
-            future_ret = (1 + rm.iloc[future_idx:future_end_idx]).prod() - 1
+            future_ret = (1 + rm.iloc[future_start_idx:future_end_idx]).prod() - 1
             fwd = future_ret
 
             ic = rank_ic(signal, fwd)
@@ -276,36 +276,53 @@ class SignalEngine:
             "pct_positive": round(sum(1 for v in ic_values if v > 0) / len(ic_values) * 100, 1),
         }
 
+    def _get_signal_at(self, signal_id: str, date, returns: pd.DataFrame) -> pd.Series:
+        """Build technical signals from observations available by `date` only."""
+        history = returns.loc[:date]
+        if signal_id == "MOM12_1":
+            values = (1 + history.iloc[-252-21:-21]).prod() - 1 if len(history) >= 273 else pd.Series(dtype=float)
+        elif signal_id == "MOM_1M":
+            values = (1 + history.tail(21)).prod() - 1 if len(history) >= 21 else pd.Series(dtype=float)
+        elif signal_id == "STREV":
+            values = -((1 + history.tail(5)).prod() - 1) if len(history) >= 5 else pd.Series(dtype=float)
+        elif signal_id == "LOW_VOL":
+            values = -history.tail(21).std() * np.sqrt(252) if len(history) >= 21 else pd.Series(dtype=float)
+        elif signal_id in {"LOW_BETA", "IDIOVOL"} and BENCHMARK in history.columns:
+            market = history[BENCHMARK]
+            window = history.tail(252 if signal_id == "LOW_BETA" else 60)
+            values = {}
+            for ticker in window.columns:
+                if ticker == BENCHMARK:
+                    continue
+                pair = pd.concat([window[ticker], market.reindex(window.index)], axis=1).dropna()
+                if len(pair) < (60 if signal_id == "LOW_BETA" else 30):
+                    continue
+                cov = np.cov(pair.iloc[:, 0], pair.iloc[:, 1])[0, 1]
+                var = np.var(pair.iloc[:, 1])
+                if var <= 0:
+                    continue
+                beta = cov / var
+                values[ticker] = -beta if signal_id == "LOW_BETA" else -float(np.std(pair.iloc[:, 0] - beta * pair.iloc[:, 1]) * np.sqrt(252))
+            values = pd.Series(values)
+        else:
+            # Current Yahoo fundamentals and analyst snapshots are not historical data.
+            return pd.Series(dtype=float)
+        return cross_sectional_zscore(values.dropna()) if len(values) else pd.Series(dtype=float)
+
     def compute_signal_stats(self, signal_id: str, horizon: int = 21) -> dict:
         """Core performance stats for one signal."""
         ic_data = self.compute_rolling_ic(signal_id, horizon=horizon)
         if not ic_data["ic_series"]:
-            return self._fallback_stats(signal_id)
+            return {"signal_id": signal_id, "ic": None, "icir": None, "t_stat": None,
+                    "pct_positive_ic": None, "gross_sharpe": None, "net_sharpe": None,
+                    "annual_ir": None, "max_drawdown": None, "turnover": None,
+                    "tc_cost": None, "win_rate": None, "n_periods": 0,
+                    "promoted": False, "status": "INSUFFICIENT_POINT_IN_TIME_DATA"}
 
         ic_vals = ic_data["ic_series"]
         mean_ic = ic_data["mean_ic"]
         icir = ic_data["icir"]
         t_stat = ic_data["t_stat"]
-
-        # Annualized IR approximation
-        ann_ir = float(icir * np.sqrt(252 / horizon)) if icir else 0
-
-        # Estimate Sharpe from IC (market-neutral approximation: SR ≈ IC * sqrt(N) / σ_IC)
-        gross_sharpe = min(max(ann_ir * 0.8, -2), 3)
-
-        # Turnover estimate
-        signal_now = self._get_signal(signal_id)
-        turnover = self._estimate_turnover(signal_id, signal_now)
-
-        # TC-adjusted net Sharpe
-        tc_drag = turnover * 0.001  # 10bps roundtrip on each unit of turnover
-        net_sharpe = gross_sharpe - tc_drag * 10
-
-        # Max drawdown (simulate from monthly ICs)
-        cumulative = np.cumsum(ic_vals)
-        running_max = np.maximum.accumulate(cumulative)
-        drawdowns = cumulative - running_max
-        max_dd = float(np.min(drawdowns)) * 5 if len(drawdowns) > 0 else -0.15
 
         return {
             "signal_id": signal_id,
@@ -313,52 +330,17 @@ class SignalEngine:
             "icir": round(icir, 3) if icir else 0,
             "t_stat": round(t_stat, 2) if t_stat else 0,
             "pct_positive_ic": ic_data.get("pct_positive", 50),
-            "gross_sharpe": round(gross_sharpe, 2),
-            "net_sharpe": round(net_sharpe, 2),
-            "annual_ir": round(ann_ir, 2),
-            "max_drawdown": round(max_dd * 100, 1),
-            "turnover": round(turnover * 100, 0),
-            "tc_cost": round(tc_drag * 100, 3),
-            "win_rate": ic_data.get("pct_positive", 50),
+            "gross_sharpe": None,
+            "net_sharpe": None,
+            "annual_ir": None,
+            "max_drawdown": None,
+            "turnover": None,
+            "tc_cost": None,
+            "win_rate": None,
             "n_periods": len(ic_vals),
-            "promoted": bool(
-                mean_ic and mean_ic > 0.02
-                and icir and icir > 0.35
-                and net_sharpe > 0.3
-            ),
-        }
-
-    def _estimate_turnover(self, signal_id: str, signal: pd.Series) -> float:
-        """Estimate monthly portfolio turnover from signal autocorrelation."""
-        # Higher signal persistence = lower turnover
-        persistence = {
-            "MOM12_1": 0.85, "STREV": 0.05, "MOM_1M": 0.6,
-            "VAL_BM": 0.97, "VAL_EP": 0.95, "QUAL_ROE": 0.90,
-            "QUAL_GP": 0.90, "LOW_VOL": 0.80, "LOW_BETA": 0.85,
-            "IDIOVOL": 0.75, "EARN_REV": 0.40, "SHORT_INT": 0.70,
-            "ACCRUAL": 0.92, "INV_GROW": 0.93, "COMBO_QVM": 0.85,
-        }.get(signal_id, 0.70)
-        return 1 - persistence  # Approx monthly turnover
-
-    def _fallback_stats(self, signal_id: str) -> dict:
-        """Deterministic fallback when data is insufficient."""
-        np.random.seed(abs(hash(signal_id)) % 2**31)
-        ic = round(np.random.uniform(0.015, 0.065), 4)
-        icir = round(np.random.uniform(0.3, 0.9), 3)
-        gs = round(np.random.uniform(0.3, 1.4), 2)
-        ns = round(gs - np.random.uniform(0.1, 0.4), 2)
-        return {
-            "signal_id": signal_id,
-            "ic": ic, "icir": icir, "t_stat": round(icir * 3, 2),
-            "pct_positive_ic": round(50 + ic * 200, 1),
-            "gross_sharpe": gs, "net_sharpe": ns,
-            "annual_ir": round(icir * np.sqrt(12), 2),
-            "max_drawdown": round(-np.random.uniform(8, 22), 1),
-            "turnover": round(np.random.uniform(15, 80), 0),
-            "tc_cost": round(np.random.uniform(0.05, 0.25), 3),
-            "win_rate": round(50 + ic * 200, 1),
-            "n_periods": 0,
-            "promoted": ic > 0.03 and ns > 0.4,
+            # IC alone is not a net portfolio backtest; never auto-promote on it.
+            "promoted": False,
+            "status": "IC_RESEARCH_ONLY",
         }
 
     # ── Bulk Computations ─────────────────────────────────────────────────────
@@ -376,41 +358,19 @@ class SignalEngine:
         """Full detail for one signal including decay and distributions."""
         base = self.compute_signal_stats(signal_id)
         ic_roll = self.compute_rolling_ic(signal_id)
-        decay = self.compute_decay(signal_id)
         wf = self.walk_forward(signal_id, years=5)
-
-        # Monthly returns distribution (simulated from IC distribution)
-        np.random.seed(abs(hash(signal_id + "dist")) % 2**31)
-        ic = base["ic"] or 0.03
-        monthly_rets = []
-        for i in range(60):
-            ret = float(ic * 100 + np.random.normal(0, 3))
-            monthly_rets.append({"month": i + 1, "return": round(ret, 2)})
 
         return {
             **base,
             "rolling_ic": ic_roll,
-            "decay": decay,
+            "decay": [],
             "walkforward": wf,
-            "monthly_returns": monthly_rets,
+            "monthly_returns": [],
         }
 
     def compute_decay(self, signal_id: str) -> list:
         """IC decay as function of lag days 1–21."""
-        base_ic = self.compute_signal_stats(signal_id)["ic"] or 0.03
-        decay_rates = {
-            "MOM12_1": 15, "STREV": 2, "MOM_1M": 8, "VAL_BM": 60,
-            "VAL_EP": 55, "QUAL_ROE": 45, "QUAL_GP": 40, "LOW_VOL": 20,
-            "LOW_BETA": 25, "IDIOVOL": 18, "EARN_REV": 10, "SHORT_INT": 30,
-            "ACCRUAL": 50, "INV_GROW": 50, "COMBO_QVM": 20,
-        }
-        half_life = decay_rates.get(signal_id, 15)
-        result = []
-        for lag in range(1, 22):
-            ic = float(base_ic * np.exp(-lag / half_life * np.log(2)))
-            noise = np.random.normal(0, abs(base_ic) * 0.05)
-            result.append({"lag": lag, "ic": round(max(0, ic + noise), 4)})
-        return result
+        return []
 
     def walk_forward(self, signal_id: str, years: int = 5) -> list:
         """Year-by-year walk-forward OOS metrics."""
@@ -419,52 +379,27 @@ class SignalEngine:
         dates = ic_roll.get("dates", [])
 
         results = []
-        base_stats = self.compute_signal_stats(signal_id)
-        base_ic = base_stats["ic"] or 0.03
-
         for y in range(years):
-            year = 2019 + y
-            np.random.seed(abs(hash(signal_id + str(year))) % 2**31)
-            # Use real IC data if available, otherwise simulate
+            year = datetime.now().year - years + y
             year_ics = [ic_series[i] for i, d in enumerate(dates) if d.startswith(str(year))]
             if year_ics:
                 yr_ic = float(np.mean(year_ics))
-                yr_ann = float(np.sum(year_ics) * 8)
             else:
-                regime_factor = [0.9, 0.5, 1.1, 0.7, 1.2][y % 5]
-                yr_ic = round(float(base_ic * regime_factor + np.random.normal(0, 0.008)), 4)
-                yr_ann = round(float(yr_ic * 100 * 12 + np.random.normal(0, 4)), 2)
+                continue
 
             results.append({
                 "year": year,
                 "ic": round(yr_ic, 4),
-                "ann_return": round(yr_ann, 1),
-                "n_months": len(year_ics) if year_ics else 12,
+                "ann_return": None,
+                "n_months": len(year_ics),
             })
 
         return results
 
     def compute_regime_conditional_ic(self, regime_detector) -> dict:
         """IC of each signal conditioned on each regime."""
-        regime_history = regime_detector.full_history()
-        regime_map = {d["date"]: d["regime"] for d in regime_history.get("history", [])}
-        result = {}
-
-        for sig in SIGNAL_CATALOG:
-            sid = sig["id"]
-            base = self.compute_signal_stats(sid)
-            base_ic = base["ic"] or 0.025
-
-            regime_ics = {}
-            for reg_id in ["bull", "bear", "crisis", "range_bound", "inflationary"]:
-                np.random.seed(abs(hash(sid + reg_id)) % 2**31)
-                mults = {"bull": 1.1, "bear": 0.6, "crisis": 0.3, "range_bound": 1.2, "inflationary": 0.85}
-                mult = mults.get(reg_id, 1.0)
-                regime_ics[reg_id] = round(float(base_ic * mult + np.random.normal(0, 0.005)), 4)
-
-            result[sid] = regime_ics
-
-        return result
+        return {sig["id"]: {reg: None for reg in ["bull", "bear", "crisis", "range_bound", "inflationary"]}
+                for sig in SIGNAL_CATALOG}
 
 
 BENCHMARK = "SPY"

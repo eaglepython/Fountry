@@ -11,9 +11,8 @@ Risk checks performed:
   2. Gross leverage (>150% total)
   3. Daily drawdown (approaching -3% circuit breaker)
   4. Sector concentration (>30% single sector)
-  5. Liquidity (avg volume vs order size)
-  6. Macro regime conflict (bearish macro → reduce longs)
-  7. LLM reasoned risk judgment (nemotron-30b)
+  5. Macro regime conflict (bearish macro → reject large longs)
+  LLM output is an optional advisory check; it is not a substitute for hard limits.
 """
 import os, logging, time, json
 from datetime import datetime
@@ -63,8 +62,10 @@ def _check_leverage(new_value: float, nav: float, positions: dict) -> Optional[s
 
 def _check_drawdown(nav: float, nav_open: float) -> Optional[str]:
     dd = (nav - nav_open) / nav_open if nav_open > 0 else 0
-    if dd < -0.025:  # warn at -2.5%, circuit breaks at -3%
-        return f"Approaching daily drawdown limit: {dd:.2%} (circuit breaker at -3%)"
+    if dd <= -0.03:
+        return f"Daily drawdown limit breached: {dd:.2%} (limit -3%)"
+    if dd <= -0.025:
+        return f"Approaching daily drawdown limit: {dd:.2%} (limit -3%)"
     return None
 
 
@@ -169,6 +170,9 @@ class RiskGatekeeperAgent:
         # ── Rule-based checks ─────────────────────────────────────────────
         order_value = qty * price
 
+        if not ticker or side not in {"BUY", "SELL"} or qty <= 0 or price <= 0 or nav <= 0:
+            reject_reasons.append("Invalid order inputs or non-positive NAV")
+
         c = _check_concentration(ticker, qty, price, nav, positions)
         if c:
             reject_reasons.append(c)
@@ -179,14 +183,17 @@ class RiskGatekeeperAgent:
 
         dd = _check_drawdown(nav, nav_open)
         if dd:
-            warnings.append(dd)
+            if "limit breached" in dd:
+                reject_reasons.append(dd)
+            else:
+                warnings.append(dd)
 
         sec = _check_sector(ticker, qty, price, nav, positions)
         if sec:
-            warnings.append(sec)
+            reject_reasons.append(sec)
 
         # Hard reject: macro conflict — bearish regime + large long
-        if side == "BUY" and macro_score < -0.5 and order_value / nav > 0.03:
+        if nav > 0 and side == "BUY" and macro_score < -0.5 and order_value / nav > 0.03:
             reject_reasons.append(f"Macro conflict: bearish regime (score {macro_score:.2f}) with large long order")
 
         # ── If hard rules reject → skip LLM ──────────────────────────────
@@ -218,15 +225,22 @@ class RiskGatekeeperAgent:
                     approved_qty = 0
                     llm_reasons = [llm_answer]
                 elif upper.startswith("REDUCE_SIZE"):
-                    final_decision = "REDUCE_SIZE"
                     tokens = llm_answer.split()
-                    for tok in tokens:
-                        if tok.isdigit():
-                            approved_qty = min(int(tok), qty)
-                            break
-                    llm_reasons = [llm_answer]
-                else:
+                    reduced_qty = next((int(tok) for tok in tokens if tok.isdigit()), 0)
+                    if 0 < reduced_qty < qty:
+                        final_decision = "REDUCE_SIZE"
+                        approved_qty = reduced_qty
+                        llm_reasons = [llm_answer]
+                    else:
+                        final_decision = "REJECT"
+                        approved_qty = 0
+                        llm_reasons = ["Risk model returned an invalid reduce-size quantity; failing closed."]
+                elif upper == "APPROVE" or upper.startswith("APPROVE "):
                     final_decision = "APPROVE"
+                else:
+                    final_decision = "REJECT"
+                    approved_qty = 0
+                    llm_reasons = ["Risk model returned an unrecognized response; failing closed."]
 
             decision = {
                 "decision": final_decision,

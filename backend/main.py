@@ -1,7 +1,7 @@
 """
 Fountry — FastAPI Backend v2.2
-Serves real signal metrics, walk-forward results, regime labels,
-FRED macro signals, SEC EDGAR accounting signals, and autonomous agents.
+Serves exploratory price-signal IC, market data and agent status. Portfolio
+returns remain unavailable until point-in-time, after-cost validation exists.
 """
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
         macro_engine = MacroSignalEngine(fred_loader)
         log.info(f"✅ FRED: {len(fred_data)} series loaded")
     except (Exception, asyncio.TimeoutError) as e:
-        log.warning(f"FRED load skipped ({type(e).__name__}) — using synthetic fallback")
+        log.warning(f"FRED load skipped ({type(e).__name__}); macro data is unavailable")
         macro_engine = MacroSignalEngine(fred_loader)
 
     # ── 3. SEC EDGAR accounting signals ────────────────────────────────────
@@ -91,9 +91,9 @@ async def lifespan(app: FastAPI):
                 timeout=15.0)
             log.info(f"✅ EDGAR: {len(accounting_engine._universe_data)} tickers")
         else:
-            log.warning("No universe tickers — EDGAR signals will use fallback")
+            log.warning("No universe tickers — EDGAR signals are unavailable")
     except (Exception, asyncio.TimeoutError) as e:
-        log.warning(f"EDGAR load skipped ({type(e).__name__}) — using synthetic fallback")
+        log.warning(f"EDGAR load skipped ({type(e).__name__}); accounting data is unavailable")
         accounting_engine = AccountingSignalEngine(edgar_loader)
 
     # ── 4. Agents ───────────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ async def require_agent_control(x_agent_control_token: str | None = Header(defau
 @app.get("/health")
 async def health():
     return {
-        "status":          "ok",
+        "status":          "ok" if data_loader.is_loaded else "degraded",
         "data_loaded":     data_loader.is_loaded,
         "fred_loaded":     fred_loader._loaded,
         "edgar_tickers":   len(accounting_engine._universe_data) if accounting_engine else 0,

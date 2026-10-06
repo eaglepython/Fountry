@@ -27,7 +27,7 @@
 
 <br>
 
-**⟡ Institutional-Grade Quantitative Alpha Research & Execution Platform ⟡**
+**⟡ Quantitative Research Workbench — Experimental, Not Investment-Validated ⟡**
 
 <br>
 
@@ -42,15 +42,15 @@
 
 <br>
 
-[![Signals](https://img.shields.io/badge/Alpha%20Signals-15%20Factors-c9a96e?style=flat-square&logo=chartdotjs)](https://fountry.netlify.app)
+[![Signals](https://img.shields.io/badge/Research%20Candidates-15-c9a96e?style=flat-square&logo=chartdotjs)](https://fountry.netlify.app)
 [![Data](https://img.shields.io/badge/Market%20Data-Free%20·%20No%20API%20Key-4ade80?style=flat-square&logo=yahoo)](https://fountry.netlify.app)
-[![Agents](https://img.shields.io/badge/Autonomous%20Agents-7%20Active-c084fc?style=flat-square&logo=probot)](https://fountry.netlify.app)
+[![Agents](https://img.shields.io/badge/Agent%20Modules-7-c084fc?style=flat-square&logo=probot)](https://fountry.netlify.app)
 [![Deploy](https://img.shields.io/badge/Hosted%20on-Netlify-00C7B7?style=flat-square&logo=netlify)](https://fountry.netlify.app)
 [![License](https://img.shields.io/badge/License-MIT-facc15?style=flat-square)](LICENSE)
 
 <br>
 
-> *Research signals. Test regimes. Execute autonomously.*
+> *Explore signals and market data. Trading results are not validated.*
 
 </div>
 
@@ -60,9 +60,9 @@
 
 ## ◈ Overview
 
-**Fountry** is a full-stack quantitative research platform that mirrors the internal tooling used at institutional asset managers. It covers the complete alpha lifecycle — from raw signal research and walk-forward validation, through regime stress-testing and execution analytics, to live paper trading with autonomous agents.
+**Fountry** is an experimental quantitative research dashboard. It is not institutional-grade or investment validated. The current data vendor provides today’s surviving ticker universe and current snapshots for many fundamentals; it does not provide the historical constituents and publication timestamps required to substantiate a point-in-time long-horizon backtest. Historical return, Sharpe, capacity, regime and trade analytics must not be inferred from its research-candidate list.
 
-Everything runs **free with no API keys required** for core functionality. Market data comes from `yfinance`, macro signals from the Federal Reserve's public FRED API, and accounting signals from SEC EDGAR filings.
+Market prices use `yfinance`; macro and filing data are optional sources. When real data is unavailable the API now reports a degraded/unavailable state instead of fabricating market prices. The research UI requires a connected backend. Model providers require their own configured runtime or API credentials; model weights are not bundled.
 
 <br>
 
@@ -76,12 +76,12 @@ Everything runs **free with no API keys required** for core functionality. Marke
 
 | View | What You Get |
 |:----:|:------------|
-| **⚗ FOUNTRY** | Signal universe command centre — 15 factor signals ranked by IC, ICIR, net Sharpe and capacity. Promoted vs. under-review pipeline. |
-| **🔬 SIGNAL LAB** | Full deep-dive on any signal: 10-year walk-forward OOS results, IC decay curve, regime-conditional performance matrix. |
-| **⚡ STRESS TEST** | Cross-signal performance heatmap across 5 market regimes (Bull, Bear, Crisis, Range-bound, Inflationary). Live FRED macro overlay. |
-| **📋 EXECUTION** | Real-time trade blotter with VWAP slippage, market impact decomposition (VWAP / TWAP / IS), and algo attribution. |
-| **📊 PORTFOLIO** | Equity curve vs benchmark, Fama-French factor attribution, full risk decomposition (VaR, CVaR, Sharpe, Sortino, Calmar). |
-| **🤖 AGENTS** | Live autonomous agents dashboard — execution bot, AI commentary engine, background scheduler, circuit breaker controls. |
+| **⚗ FOUNTRY** | Signal research candidates with observed IC only. Net Sharpe, trading capacity and strategy promotion are unavailable. |
+| **🔬 SIGNAL LAB** | Exploratory IC statistics where observations are available. IC is not a portfolio return or profitability estimate. |
+| **⚡ STRESS TEST** | Regime and macro exploration; regime-conditioned strategy results are unavailable without validated historical labels. |
+| **📋 EXECUTION** | Broker execution analytics are unavailable until a verified fill and transaction-cost feed is connected. |
+| **📊 PORTFOLIO** | Portfolio return analytics are disabled until a valid point-in-time, after-cost backtest is implemented. |
+| **🤖 AGENTS** | Agent status, commentary-provider configuration and scheduler controls. Trading agents do not have a validated profitable strategy. |
 
 </div>
 
@@ -108,8 +108,8 @@ Everything runs **free with no API keys required** for core functionality. Marke
 │  └──────────────┘  └──────────────┘  └──────────────────────┘  │
 ├─────────────────────────────────────────────────────────────────┤
 │                       SIGNAL ENGINE                              │
-│  15 cross-sectional equity factors  ·  Walk-forward 10yr OOS   │
-│  HMM 3-state regime detector (hmmlearn)  ·  IC decay curves    │
+│  Exploratory price signals · point-in-time history pending     │
+│  Regime research only · no validated return or decay claims     │
 ├─────────────────────────────────────────────────────────────────┤
 │                      AGENT LAYER (7 agents)                      │
 │  ⚡ Execution  🧠 LLM Commentary  🛡 Risk  ⭐ Scorer           │
@@ -170,7 +170,7 @@ npm run dev
 
 **3 — Open the app**
 
-Navigate to `http://localhost:5173`. The header badge switches from `SIMULATED` → **`LIVE`** once the backend finishes loading (~30s on first run while it fetches 60 tickers).
+Navigate to `http://localhost:5173`. Research views open when the backend has loaded real market prices. If the backend is offline or data loading fails, they show an unavailable state instead of demo performance.
 
 <br>
 
@@ -198,27 +198,27 @@ Navigate to `http://localhost:5173`. The header badge switches from `SIMULATED` 
 
 <div align="center">
 
-| # | Signal | Category | Typical IC | Status |
-|:-:|:-------|:--------:|:----------:|:------:|
-| 1 | **12-1 Momentum** | Momentum | 0.042 | ✅ Promoted |
-| 2 | **Short-Term Reversal** | Reversal | 0.038 | ✅ Promoted |
-| 3 | **Book-to-Market** | Value | 0.028 | ✅ Promoted |
-| 4 | **Earnings Yield** | Value | 0.031 | ✅ Promoted |
-| 5 | **Return on Equity** | Quality | 0.035 | ✅ Promoted |
-| 6 | **Gross Profitability** | Quality | 0.033 | ✅ Promoted |
-| 7 | **Low Volatility** | Risk | 0.029 | 🔬 Review |
-| 8 | **Low Beta** | Risk | 0.027 | 🔬 Review |
-| 9 | **Earnings Revision** | Sentiment | 0.051 | ✅ Promoted |
-| 10 | **Short Interest** | Sentiment | 0.044 | ✅ Promoted |
-| 11 | **Accruals** | Accounting | 0.026 | 🔬 Review |
-| 12 | **Investment Growth** | Accounting | 0.024 | 🔬 Review |
-| 13 | **Quality-Value-Momentum** | Composite | 0.048 | ✅ Promoted |
-| 14 | **ML Gradient Boost** | ML | 0.062 | ✅ Promoted |
-| 15 | **Earnings NLP** | ML | 0.055 | ✅ Promoted |
+| # | Signal | Category | Evidence status |
+|:-:|:-------|:--------:|:----------------|
+| 1 | **12-1 Momentum** | Momentum | Exploratory only |
+| 2 | **Short-Term Reversal** | Reversal | Exploratory only |
+| 3 | **Book-to-Market** | Value | No point-in-time fundamentals |
+| 4 | **Earnings Yield** | Value | No point-in-time fundamentals |
+| 5 | **Return on Equity** | Quality | No point-in-time fundamentals |
+| 6 | **Gross Profitability** | Quality | No point-in-time fundamentals |
+| 7 | **Low Volatility** | Risk | Exploratory only |
+| 8 | **Low Beta** | Risk | Exploratory only |
+| 9 | **Earnings Revision** | Sentiment | No historical analyst estimates |
+| 10 | **Short Interest** | Sentiment | No point-in-time series |
+| 11 | **Accruals** | Accounting | No point-in-time fundamentals |
+| 12 | **Investment Growth** | Accounting | No point-in-time fundamentals |
+| 13 | **Quality-Value-Momentum** | Composite | Not performance validated |
+| 14 | **ML Gradient Boost** | ML | Model/backtest not implemented |
+| 15 | **Earnings NLP** | ML | Historical text dataset/model not implemented |
 
 </div>
 
-*Promotion gates: IC > 0.025 · ICIR > 0.40 · Net Sharpe > 0.50 · Walk-forward win rate > 60%*
+No promotion or profitability gates are currently enabled. A valid evaluation needs dated point-in-time features and constituents, chronological out-of-sample periods, and measured execution costs.
 
 <br>
 
@@ -229,7 +229,7 @@ Navigate to `http://localhost:5173`. The header badge switches from `SIMULATED` 
 <br>
 
 ### ⚡ Execution Agent
-Autonomous paper trading bot. Reads promoted signals → sizes positions (max 5% per ticker, 150% gross) → executes via Alpaca Paper API or in-memory fallback. Includes daily circuit-breaker at −3% NAV.
+Experimental execution agent. It consumes only explicitly promoted signals; none are currently promoted because IC is not sufficient evidence of profitability. Do not enable live trading on this project until broker state reconciliation, fill accounting, tested hard risk limits and a valid after-cost strategy backtest are in place.
 
 ```env
 # backend/.env  (optional — falls back to in-memory paper portfolio)
@@ -240,12 +240,12 @@ ALPACA_SECRET_KEY=your_secret
 <br>
 
 ### 🧠 AI Commentary Agent
-Generates institutional-grade research notes from live signal metrics, regime state, and macro data. Model cascade:
+Generates research status notes from available signal and macro data. Models run through configured providers; weights are not bundled. Missing return metrics are reported as unavailable. Model cascade:
 
 ```
-1. NVIDIA NIM  (nemotron-70b)   ← best quality, needs NVIDIA_API_KEY
-2. Ollama      (llama3, local)  ← free, runs on your machine
-3. Groq        (llama3, cloud)  ← free tier, needs GROQ_API_KEY
+1. NVIDIA NIM  (configured model IDs) ← needs NVIDIA_API_KEY
+2. Ollama      (llama3, local)       ← requires a reachable server and installed model
+3. Groq        (llama3, cloud)       ← needs GROQ_API_KEY
 4. Template engine              ← always available, zero config
 ```
 
@@ -258,22 +258,22 @@ OLLAMA_HOST=http://localhost:11434  # default if Ollama installed
 <br>
 
 ### 🛡 Risk Agent
-Pre-trade risk gatekeeper. Validates every order against 7 rules before execution: concentration, leverage, drawdown, sector exposure, liquidity, macro conflict, and LLM-reasoned judgment. Returns `APPROVE / REJECT / REDUCE_SIZE`.
+Experimental pre-trade checks for concentration, leverage, drawdown, sector exposure, and macro conflict. LLM output is advisory; these checks do not replace broker-side controls. Liquidity checks are not implemented.
 
 <br>
 
 ### ⭐ Scorer Agent
-Ranks signals 0–1 across 5 dimensions — IC/ICIR/Sharpe, regime fit, macro alignment, liquidity, and LLM reward score — to drive dynamic allocation sizing.
+Prototype scoring module. It is not connected to execution and must not determine capital allocations from unvalidated IC values.
 
 <br>
 
 ### 💬 Sentiment Agent
-Fetches headlines via yfinance → scores with FinBERT (local, CPU, free) → summarises with a 675B vision-language model for narrative context.
+Optional headline sentiment module. FinBERT requires the optional `transformers` package and downloaded weights. Hosted model calls require configured credentials; model weights are not installed by this repo.
 
 <br>
 
 ### 👁 Vision Agent
-Generates OHLCV charts with matplotlib → submits to a 90B vision model → detects chart patterns (breakout, H&S, support/resistance) with conviction scores.
+Optional chart commentary module. It needs a reachable multimodal model API; detected patterns are not validated trading signals.
 
 <br>
 

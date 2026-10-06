@@ -5,22 +5,8 @@ const API_BASE = (import.meta.env?.VITE_API_URL || (import.meta.env?.PROD ? "" :
   .replace(/\/+$/, "");
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FOUNTRY — Institutional-Grade Alpha Research & Execution Platform
+// FOUNTRY — Experimental quantitative research workbench
 // ═══════════════════════════════════════════════════════════════════════════
-
-// ── SEEDED PRNG for deterministic "live" data ──────────────────────────────
-function mulberry32(seed) {
-  return function() {
-    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-const rng = mulberry32(0xdeadbeef);
-const rn = () => rng();
-const rnRange = (a, b) => a + (b - a) * rn();
-const rnNorm = () => { let u = 0, v = 0; while (!u) u = rn(); while (!v) v = rn(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
 
 // ── SIGNAL UNIVERSE ─────────────────────────────────────────────────────────
 const SIGNALS = [
@@ -37,8 +23,8 @@ const SIGNALS = [
   { id: "ACCRUAL",   name: "Accruals",               category: "Accounting", description: "Low accruals predict higher returns. Sloan (1996) accrual anomaly." },
   { id: "INV_GROW",  name: "Investment Growth",      category: "Accounting", description: "Low asset growth predicts outperformance. Over-investment destruction." },
   { id: "COMBO_QVM", name: "Quality-Value-Momentum", category: "Composite",  description: "Equal-weighted composite of QVM signals. Diversification across factors." },
-  { id: "ML_GBDT",   name: "ML Gradient Boost",      category: "ML",         description: "XGBoost trained on 40+ features with walk-forward retrain every quarter." },
-  { id: "NLP_EARN",  name: "Earnings NLP",           category: "ML",         description: "FinBERT sentiment on earnings calls. Q&A tone vs prepared remarks delta." },
+  { id: "ML_GBDT",   name: "ML Gradient Boost",      category: "ML",         description: "Candidate only; model and historical evaluation are not implemented." },
+  { id: "NLP_EARN",  name: "Earnings NLP",           category: "ML",         description: "Candidate only; historical earnings text and validated model are unavailable." },
 ];
 
 // ── REGIME DEFINITIONS ───────────────────────────────────────────────────────
@@ -50,159 +36,17 @@ const REGIMES = [
   { id: "inflate", name: "Inflationary",   color: "#fb923c", desc: "Rising rates, commodity-driven" },
 ];
 
-// ── GENERATE REALISTIC SIGNAL METRICS ────────────────────────────────────────
-function generateSignalMetrics(signalId) {
-  const seed = signalId.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-  const r = mulberry32(seed);
-  const nn = () => { let u=0,v=0; while(!u) u=r(); while(!v) v=r(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
-
-  const baseIC = { MOM12_1: 0.042, STREV: 0.038, VAL_BM: 0.028, VAL_EP: 0.031,
-    QUAL_ROE: 0.035, QUAL_GP: 0.033, LOW_VOL: 0.029, LOW_BETA: 0.027,
-    EARN_REV: 0.051, SHORT_INT: 0.044, ACCRUAL: 0.026, INV_GROW: 0.024,
-    COMBO_QVM: 0.048, ML_GBDT: 0.062, NLP_EARN: 0.055 }[signalId] || 0.03;
-
-  const ic = baseIC + nn() * 0.008;
-  const icir = ic / (0.08 + r() * 0.04);
-  const annualIR = icir * Math.sqrt(252);
-  const turnover = 0.2 + r() * 0.6;
-  const grossSharpe = 0.6 + r() * 0.8;
-  const tcCost = turnover * 0.001;
-  const netSharpe = grossSharpe - tcCost * 4;
-  const maxDD = -(0.08 + r() * 0.15);
-  const calmar = netSharpe > 0 ? netSharpe / Math.abs(maxDD) : 0;
-  const winRate = 0.50 + ic * 3 + nn() * 0.02;
-  const hitRate = 0.48 + ic * 2;
-  const capacity = Math.floor(rnRange(50, 2000));
-
-  // Regime performance
-  const regimeIC = {};
-  REGIMES.forEach(reg => {
-    const base = { bull: 1.1, bear: 0.7, crisis: 0.4, range: 1.2, inflate: 0.9 }[reg.id] || 1;
-    regimeIC[reg.id] = (ic * base + nn() * 0.01).toFixed(4);
-  });
-
-  // Walk-forward years
-  const wfYears = [];
-  const baseYear = 2014;
-  let cumPnL = 0;
-  for (let y = 0; y < 10; y++) {
-    const yr = baseYear + y;
-    const regime = REGIMES[Math.floor(r() * REGIMES.length)].id;
-    const ann = ic * 30 + nn() * 8 + (regime === "crisis" ? -5 : regime === "bull" ? 3 : 0);
-    cumPnL += ann;
-    wfYears.push({ year: yr, ic: (ic + nn() * 0.01).toFixed(3), annReturn: ann.toFixed(1), cumPnL: cumPnL.toFixed(1), regime });
-  }
-
-  // Decay curve
-  const decay = [];
-  for (let lag = 1; lag <= 21; lag++) {
-    decay.push({ lag, ic: Math.max(0, ic * Math.exp(-lag / 8) + nn() * 0.003) });
-  }
-
-  // Distribution
-  const returns = Array.from({ length: 60 }, (_, i) => ({
-    month: i + 1, ret: ic * 2 + nn() * 3,
-    long: ic * 3 + nn() * 2,
-    short: -ic * 1.5 + nn() * 2.5,
-  }));
-
-  // Promotions
-  const promoted = netSharpe > 0.5 && Math.abs(ic) > 0.025 && icir > 0.4;
-
-  return {
-    ic: ic.toFixed(4),
-    icir: icir.toFixed(3),
-    annualIR: annualIR.toFixed(2),
-    grossSharpe: grossSharpe.toFixed(2),
-    netSharpe: netSharpe.toFixed(2),
-    maxDD: (maxDD * 100).toFixed(1),
-    calmar: calmar.toFixed(2),
-    turnover: (turnover * 100).toFixed(0),
-    winRate: (winRate * 100).toFixed(1),
-    hitRate: (hitRate * 100).toFixed(1),
-    capacity: `$${capacity}M`,
-    tcCost: (tcCost * 100).toFixed(2),
-    regimeIC,
-    wfYears,
-    decay,
-    returns,
-    promoted,
-  };
-}
-
-// Pre-compute all signal metrics
-const SIGNAL_METRICS_SIM = {};
-SIGNALS.forEach(s => { SIGNAL_METRICS_SIM[s.id] = generateSignalMetrics(s.id); });
-
-// ── GENERATE PRICE DATA ───────────────────────────────────────────────────────
-function generatePriceSeries(n = 252) {
-  const series = [100];
-  const vol = 0.015;
-  let trend = 0.0003;
-  for (let i = 1; i < n; i++) {
-    if (i % 60 === 0) trend = (rn() - 0.5) * 0.001;
-    const ret = trend + rnNorm() * vol;
-    series.push(series[i-1] * (1 + ret));
-  }
-  return series;
-}
-
-// ── EXECUTION SIMULATION ─────────────────────────────────────────────────────
-function generateExecutionData() {
-  const trades = [];
-  const statuses = ["FILLED", "FILLED", "FILLED", "PARTIAL", "CANCELLED"];
-  const tickers = ["AAPL","MSFT","GOOGL","AMZN","NVDA","META","BRK","JPM","XOM","JNJ","V","PG","MA","HD","CVX"];
-  const sides = ["BUY","BUY","BUY","SELL","SELL"];
-  for (let i = 0; i < 40; i++) {
-    const side = sides[Math.floor(rn() * sides.length)];
-    const qty = Math.floor(rnRange(100, 5000));
-    const price = rnRange(50, 800);
-    const impact = rnRange(0.01, 0.08);
-    const spread = rnRange(0.01, 0.05);
-    trades.push({
-      id: `TRD-${String(1000 + i).padStart(4, "0")}`,
-      ticker: tickers[Math.floor(rn() * tickers.length)],
-      side,
-      qty,
-      price: price.toFixed(2),
-      impact: impact.toFixed(3),
-      spread: spread.toFixed(3),
-      totalTc: ((impact + spread) * qty * price / 10000).toFixed(0),
-      status: statuses[Math.floor(rn() * statuses.length)],
-      vwapSlippage: (rnNorm() * 0.02).toFixed(4),
-      time: `${String(9 + Math.floor(rn() * 6)).padStart(2,"0")}:${String(Math.floor(rn() * 60)).padStart(2,"0")}:${String(Math.floor(rn() * 60)).padStart(2,"0")}`,
-    });
-  }
-  return trades;
-}
-
-const PORTFOLIO_PNL_SIM = generatePriceSeries(252);
-const EXECUTION_TRADES   = generateExecutionData();
-const SPY_BENCHMARK_SIM  = generatePriceSeries(252);
-
-// ═══════════════════════════════════════════════════════════════════════════
-// COMPONENTS
-// ═══════════════════════════════════════════════════════════════════════════
-
 const VIEWS = ["FOUNTRY", "SIGNAL LAB", "STRESS TEST", "EXECUTION", "PORTFOLIO", "AGENTS"];
 
-function sparkColor(val) {
-  if (val === undefined || val === null) return "#888";
-  const n = parseFloat(val);
-  if (isNaN(n)) return "#888";
-  return n >= 0 ? "#4ade80" : "#f87171";
-}
-
-function Badge({ text, color }) {
-  return (
-    <span style={{
-      display: "inline-block", padding: "2px 10px", borderRadius: 2,
-      background: color + "20", color, border: `1px solid ${color}44`,
-      fontFamily: "JetBrains Mono, monospace", fontSize: 10, letterSpacing: "0.1em",
-    }}>{text}</span>
-  );
-}
-
+// Research views begin in an unavailable state until real backend data arrives.
+const EMPTY_SIGNAL_METRIC = {
+  ic: "—", icir: "—", annualIR: "—", grossSharpe: "—", netSharpe: "—",
+  maxDD: "—", calmar: "—", turnover: "—", winRate: "—", hitRate: "—",
+  capacity: "—", tcCost: "—", regimeIC: { bull: "—", bear: "—", crisis: "—", range: "—", inflate: "—" },
+  wfYears: [], decay: [], returns: [], promoted: false, nPeriods: 0,
+};
+const EMPTY_SIGNAL_METRICS = Object.fromEntries(SIGNALS.map(signal => [signal.id, EMPTY_SIGNAL_METRIC]));
+// ═══════════════════════════════════════════════════════════════════════════
 function StatCard({ label, value, sub, color = "#c9a96e", size = "normal" }) {
   const big = size === "big";
   return (
@@ -239,14 +83,16 @@ function MiniSparkline({ data, color = "#c9a96e", height = 32 }) {
 }
 
 function ICBar({ value, max = 0.07 }) {
-  const pct = Math.min(Math.abs(parseFloat(value)) / max * 100, 100);
-  const col = parseFloat(value) > 0.035 ? "#4ade80" : parseFloat(value) > 0.025 ? "#facc15" : "#f87171";
+  const numericValue = Number(value);
+  const available = Number.isFinite(numericValue);
+  const pct = available ? Math.min(Math.abs(numericValue) / max * 100, 100) : 0;
+  const col = !available ? "rgba(232,224,208,0.25)" : numericValue > 0.035 ? "#4ade80" : numericValue > 0.025 ? "#facc15" : "#f87171";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <div style={{ flex: 1, height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 3, overflow: "hidden" }}>
         <div style={{ width: `${pct}%`, height: "100%", background: col, borderRadius: 3, transition: "width 0.6s ease" }}/>
       </div>
-      <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: col, minWidth: 50, textAlign: "right" }}>{value}</span>
+      <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: col, minWidth: 50, textAlign: "right" }}>{available ? value : "—"}</span>
     </div>
   );
 }
@@ -276,6 +122,7 @@ function GaugeArc({ value, max, color, label }) {
 }
 
 function ReturnChart({ data, height = 160 }) {
+  if (!data?.length) return <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.4)" }}>No validated strategy return series available.</p>;
   const w = 100, h = height;
   const rets = data.map(d => parseFloat(d.ret));
   const min = Math.min(...rets) - 0.5;
@@ -295,6 +142,7 @@ function ReturnChart({ data, height = 160 }) {
 }
 
 function DecayCurve({ decay }) {
+  if (!decay?.length) return <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.4)" }}>Decay requires dated, point-in-time observations.</p>;
   const w = 200, h = 80;
   const max = decay[0].ic || 1;
   const pts = decay.map((d, i) => `${(i / (decay.length - 1)) * w},${h - (d.ic / max) * h}`).join(" ");
@@ -348,8 +196,9 @@ function RegimeMatrix({ regimeIC }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
       {REGIMES.map(reg => {
-        const ic = parseFloat(regimeIC[reg.id]);
-        const pct = Math.min(Math.abs(ic) / 0.07 * 100, 100);
+        const rawIC = regimeIC[reg.id];
+        const ic = rawIC == null || rawIC === "—" ? null : Number(rawIC);
+        const pct = ic == null || !Number.isFinite(ic) ? 0 : Math.min(Math.abs(ic) / 0.07 * 100, 100);
         return (
           <div key={reg.id} style={{
             background: "rgba(255,255,255,0.03)", borderRadius: 3, padding: "8px 10px",
@@ -357,10 +206,10 @@ function RegimeMatrix({ regimeIC }) {
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
               <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: reg.color }}>{reg.name}</span>
-              <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: ic > 0.02 ? "#4ade80" : "#f87171" }}>{ic.toFixed(3)}</span>
+              <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: ic != null && ic > 0.02 ? "#4ade80" : "rgba(232,224,208,0.4)" }}>{ic == null ? "—" : ic.toFixed(3)}</span>
             </div>
             <div style={{ height: 4, background: "rgba(255,255,255,0.06)", borderRadius: 2 }}>
-              <div style={{ width: `${pct}%`, height: "100%", background: ic > 0.02 ? reg.color : "#f87171", borderRadius: 2 }}/>
+              <div style={{ width: `${pct}%`, height: "100%", background: ic != null && ic > 0.02 ? reg.color : "#f87171", borderRadius: 2 }}/>
             </div>
           </div>
         );
@@ -376,8 +225,11 @@ function RegimeMatrix({ regimeIC }) {
 function FoundryOverview({ onSelectSignal, metrics }) {
   const promoted = SIGNALS.filter(s => metrics[s.id].promoted);
   const review = SIGNALS.filter(s => !metrics[s.id].promoted);
-  const totalIC = (SIGNALS.reduce((a, s) => a + parseFloat(metrics[s.id].ic), 0) / SIGNALS.length).toFixed(4);
-  const avgNetSharpe = (promoted.reduce((a, s) => a + parseFloat(metrics[s.id].netSharpe), 0) / promoted.length).toFixed(2);
+  const measuredICs = SIGNALS.map(s => Number(metrics[s.id].ic)).filter(Number.isFinite);
+  const totalIC = measuredICs.length ? (measuredICs.reduce((a, v) => a + v, 0) / measuredICs.length).toFixed(4) : "—";
+  const avgNetSharpe = promoted.length
+    ? (promoted.reduce((a, s) => a + parseFloat(metrics[s.id].netSharpe), 0) / promoted.length).toFixed(2)
+    : "—";
 
   return (
     <div className="page-pad" style={{ padding: "32px 40px", maxWidth: 1400, margin: "0 auto" }}>
@@ -387,8 +239,8 @@ function FoundryOverview({ onSelectSignal, metrics }) {
         <StatCard label="Promoted" value={promoted.length} sub="Pass all gates" color="#4ade80" size="normal"/>
         <StatCard label="In Review" value={review.length} sub="Needs work" color="#facc15" size="normal"/>
         <StatCard label="Avg IC" value={totalIC} sub="Universe mean" color="#c9a96e" size="normal"/>
-        <StatCard label="Portfolio IR" value={avgNetSharpe} sub="Net of TC" color="#4ade80" size="normal"/>
-        <StatCard label="Capacity" value="$2.4B" sub="Aggregate AUM" color="#c084fc" size="normal"/>
+        <StatCard label="Portfolio IR" value={avgNetSharpe} sub="Requires after-cost portfolio results" color="#4ade80" size="normal"/>
+        <StatCard label="Capacity" value="—" sub="Not measured" color="#c084fc" size="normal"/>
       </div>
 
       {/* Signal Pipeline */}
@@ -397,7 +249,7 @@ function FoundryOverview({ onSelectSignal, metrics }) {
         <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 6, padding: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 18, color: "#4ade80", letterSpacing: "0.08em" }}>PROMOTED SIGNALS</div>
-            <Badge text="LIVE" color="#4ade80"/>
+            <Badge text="NONE VALIDATED" color="#facc15"/>
           </div>
           <div style={{ display: "grid", gap: 8 }}>
             {promoted.map(s => {
@@ -441,6 +293,7 @@ function FoundryOverview({ onSelectSignal, metrics }) {
             {review.map(s => {
               const m = metrics[s.id];
               const issues = [];
+              if (m.nPeriods === 0) issues.push("NO DATA");
               if (parseFloat(m.ic) < 0.025) issues.push("LOW IC");
               if (parseFloat(m.netSharpe) < 0.5) issues.push("TC DRAG");
               if (parseFloat(m.icir) < 0.4) issues.push("UNSTABLE");
@@ -458,7 +311,7 @@ function FoundryOverview({ onSelectSignal, metrics }) {
                     <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "#e8e0d0" }}>{s.name}</div>
                     <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
                       {issues.map(iss => <Badge key={iss} text={iss} color="#f87171"/>)}
-                      {issues.length === 0 && <Badge text="BORDERLINE" color="#facc15"/>}
+                      {issues.length === 0 && <Badge text="NOT VALIDATED" color="#facc15"/>}
                     </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
@@ -522,16 +375,16 @@ function SignalLab({ signal, metrics }) {
 
       {/* Core Metrics */}
       <div className="stat-grid-5" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 24 }}>
-        <StatCard label="Information Coefficient" value={m.ic} sub="Mean IC (annualized)" color="#c9a96e" size="normal"/>
+        <StatCard label="Information Coefficient" value={m.ic} sub="Cross-sectional rank correlation" color="#c9a96e" size="normal"/>
         <StatCard label="IC Information Ratio" value={m.icir} sub="IC / σ(IC)" color="#c9a96e" size="normal"/>
         <StatCard label="Gross Sharpe" value={m.grossSharpe} sub="Before TC" color="#4ade80" size="normal"/>
-        <StatCard label="Net Sharpe" value={m.netSharpe} sub={`After ${m.tcCost}% TC`} color={parseFloat(m.netSharpe) > 0.5 ? "#4ade80" : "#f87171"} size="normal"/>
-        <StatCard label="Max Drawdown" value={`${m.maxDD}%`} sub="Worst period" color="#f87171" size="normal"/>
+        <StatCard label="Net Sharpe" value={m.netSharpe} sub="Requires fills and measured costs" color={parseFloat(m.netSharpe) > 0.5 ? "#4ade80" : "#f87171"} size="normal"/>
+        <StatCard label="Max Drawdown" value={m.maxDD === "—" ? "—" : `${m.maxDD}%`} sub="Requires portfolio returns" color="#f87171" size="normal"/>
       </div>
       <div className="stat-grid-5" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 28 }}>
-        <StatCard label="Annual Turnover" value={`${m.turnover}%`} sub="One-way" color="#c9a96e"/>
-        <StatCard label="Win Rate" value={`${m.winRate}%`} sub="Long-side" color="#4ade80"/>
-        <StatCard label="Hit Rate" value={`${m.hitRate}%`} sub="Long-short" color="#c9a96e"/>
+        <StatCard label="Annual Turnover" value={m.turnover === "—" ? "—" : `${m.turnover}%`} sub="Requires dated holdings" color="#c9a96e"/>
+        <StatCard label="Positive IC Periods" value={m.winRate === "—" ? "—" : `${m.winRate}%`} sub="Not a portfolio win rate" color="#4ade80"/>
+        <StatCard label="Hit Rate" value={m.hitRate} sub="Requires portfolio returns" color="#c9a96e"/>
         <StatCard label="Capacity" value={m.capacity} sub="Estimated AUM cap" color="#c084fc"/>
         <StatCard label="Calmar Ratio" value={m.calmar} sub="SR / |MaxDD|" color={parseFloat(m.calmar) > 1 ? "#4ade80" : "#facc15"}/>
       </div>
@@ -539,25 +392,25 @@ function SignalLab({ signal, metrics }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
         {/* Walk-Forward Performance */}
         <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(201,169,110,0.15)", borderRadius: 6, padding: 20 }}>
-          <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.08em", marginBottom: 14 }}>WALK-FORWARD ANALYSIS (10Y OOS)</div>
+          <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.08em", marginBottom: 14 }}>OBSERVED IC BY YEAR (NO RETURN BACKTEST)</div>
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ display: "grid", gridTemplateColumns: "60px 70px 80px 80px 80px", gap: 8, marginBottom: 4 }}>
-              {["YEAR","IC","ANN RET %","CUM RET %","REGIME"].map(h => (
+              {["YEAR","MEAN IC","SAMPLES","RETURN","REGIME"].map(h => (
                 <div key={h} style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, color: "rgba(232,224,208,0.35)", letterSpacing: "0.1em" }}>{h}</div>
               ))}
             </div>
-            {m.wfYears.map(y => {
+            {m.wfYears.length ? m.wfYears.map(y => {
               const reg = REGIMES.find(r => r.id === y.regime);
               return (
                 <div key={y.year} style={{ display: "grid", gridTemplateColumns: "60px 70px 80px 80px 80px", gap: 8, alignItems: "center", padding: "4px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
                   <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#e8e0d0" }}>{y.year}</div>
                   <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#c9a96e" }}>{y.ic}</div>
-                  <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: parseFloat(y.annReturn) > 0 ? "#4ade80" : "#f87171" }}>{parseFloat(y.annReturn) > 0 ? "+" : ""}{y.annReturn}%</div>
-                  <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: parseFloat(y.cumPnL) > 0 ? "#4ade80" : "#f87171" }}>{y.cumPnL}%</div>
+                  <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "rgba(232,224,208,0.4)" }}>{y.nMonths}</div>
+                  <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "rgba(232,224,208,0.4)" }}>—</div>
                   <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, color: reg?.color }}>{reg?.name}</div>
                 </div>
               );
-            })}
+            }) : <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.4)" }}>No year has enough observed IC samples.</p>}
           </div>
         </div>
 
@@ -576,9 +429,9 @@ function SignalLab({ signal, metrics }) {
 
       {/* Monthly Returns Bar Chart */}
       <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(201,169,110,0.15)", borderRadius: 6, padding: 20 }}>
-        <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.08em", marginBottom: 12 }}>MONTHLY RETURNS DISTRIBUTION</div>
+        <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.08em", marginBottom: 12 }}>MONTHLY RETURNS (UNAVAILABLE)</div>
         <ReturnChart data={m.returns} height={120}/>
-        <div style={{ display: "flex", gap: 24, marginTop: 8 }}>
+        {m.returns.length > 0 && <div style={{ display: "flex", gap: 24, marginTop: 8 }}>
           <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.4)" }}>
             Positive months: <span style={{ color: "#4ade80" }}>{m.returns.filter(d => parseFloat(d.ret) > 0).length}/60</span>
           </div>
@@ -588,384 +441,26 @@ function SignalLab({ signal, metrics }) {
           <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.4)" }}>
             Worst month: <span style={{ color: "#f87171" }}>{Math.min(...m.returns.map(d => parseFloat(d.ret))).toFixed(2)}%</span>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );
 }
 
-function StressTest({ metrics, macroSignals }) {
-  const [activeRegime, setActiveRegime] = useState("crisis");
-  const reg = REGIMES.find(r => r.id === activeRegime);
+function StressTest() { return <UnavailablePanel title="Regime stress results unavailable" message="No date-aligned historical regime-conditioned returns are implemented."/>; }
+
+function ExecutionDashboard() { return <UnavailablePanel title="Execution analytics unavailable" message="No verified broker fills or execution-cost feed is connected."/>; }
+
+function PortfolioDashboard() { return <UnavailablePanel title="Portfolio performance unavailable" message="No validated point-in-time, after-cost portfolio backtest is available."/>; }
+
+function UnavailablePanel({ title, message }) {
   return (
-    <div style={{ padding: "32px 40px", maxWidth: 1400, margin: "0 auto" }}>
-      <div style={{ marginBottom: 28 }}>
-        <h2 style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 28, color: "#c9a96e", letterSpacing: "0.05em", marginBottom: 6 }}>REGIME STRESS TEST ENGINE</h2>
-        <p style={{ fontFamily: "Cormorant Garamond, serif", fontSize: 15, color: "rgba(232,224,208,0.5)", margin: 0 }}>
-          Evaluate every signal across 5 market regimes. Identify regime-conditional failure modes before deployment.
-        </p>
-      </div>
-
-      {/* Regime Selector */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 28, flexWrap: "wrap" }}>
-        {REGIMES.map(r => (
-          <button key={r.id} onClick={() => setActiveRegime(r.id)} style={{
-            padding: "10px 20px", borderRadius: 3,
-            background: activeRegime === r.id ? r.color + "22" : "rgba(255,255,255,0.03)",
-            border: `1px solid ${activeRegime === r.id ? r.color : "rgba(255,255,255,0.1)"}`,
-            color: activeRegime === r.id ? r.color : "rgba(232,224,208,0.5)",
-            fontFamily: "JetBrains Mono, monospace", fontSize: 11, letterSpacing: "0.1em",
-            cursor: "pointer", transition: "all 0.2s",
-          }}>
-            <div>{r.name.toUpperCase()}</div>
-            <div style={{ fontSize: 9, opacity: 0.6, marginTop: 2 }}>{r.desc}</div>
-          </button>
-        ))}
-      </div>
-
-      {/* Heatmap Grid */}
-      <div style={{ background: "rgba(12,18,28,0.95)", border: `1px solid ${reg.color}25`, borderRadius: 6, padding: 20, marginBottom: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 18, color: reg.color, letterSpacing: "0.08em" }}>
-            SIGNAL PERFORMANCE · {reg.name.toUpperCase()}
-          </div>
-          <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.4)" }}>{reg.desc}</div>
-        </div>
-        <div style={{ display: "grid", gap: 0 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "200px repeat(5, 1fr) 80px 80px", gap: 12, padding: "0 0 8px 0", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 8 }}>
-            {["SIGNAL", ...REGIMES.map(r => r.name), "WORST", "BEST"].map(h => (
-              <div key={h} style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, color: "rgba(232,224,208,0.35)", letterSpacing: "0.08em" }}>{h.toUpperCase()}</div>
-            ))}
-          </div>
-          {SIGNALS.map(s => {
-            const m = metrics[s.id];
-            const regVals = REGIMES.map(r => parseFloat(m.regimeIC[r.id]));
-            const worst = Math.min(...regVals).toFixed(3);
-            const best = Math.max(...regVals).toFixed(3);
-            return (
-              <div key={s.id} style={{
-                display: "grid", gridTemplateColumns: "200px repeat(5, 1fr) 80px 80px",
-                gap: 12, alignItems: "center", padding: "8px 0",
-                borderBottom: "1px solid rgba(255,255,255,0.03)",
-                background: s.id === activeRegime ? "rgba(255,255,255,0.02)" : "transparent",
-              }}>
-                <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#e8e0d0" }}>{s.name}</div>
-                {REGIMES.map(r => {
-                  const ic = parseFloat(m.regimeIC[r.id]);
-                  const isActive = r.id === activeRegime;
-                  const bg = ic > 0.04 ? "#4ade8033" : ic > 0.025 ? "#facc1522" : ic > 0 ? "#f8717122" : "#c084fc22";
-                  const col = ic > 0.04 ? "#4ade80" : ic > 0.025 ? "#facc15" : ic > 0 ? "#f87171" : "#c084fc";
-                  return (
-                    <div key={r.id} style={{
-                      background: bg,
-                      border: `1px solid ${isActive ? r.color + "66" : "transparent"}`,
-                      borderRadius: 2, padding: "3px 6px", textAlign: "center",
-                      fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: col,
-                    }}>{ic.toFixed(3)}</div>
-                  );
-                })}
-                <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#f87171", textAlign: "right" }}>{worst}</div>
-                <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#4ade80", textAlign: "right" }}>{best}</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Correlation matrix placeholder */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(201,169,110,0.15)", borderRadius: 6, padding: 20 }}>
-          <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.08em", marginBottom: 14 }}>REGIME CLASSIFICATION MODEL</div>
-          <div style={{ display: "grid", gap: 10 }}>
-            {[
-              { name: "HMM (3-State)", acc: "78.3%", status: "PRIMARY" },
-              { name: "Volatility Regime", acc: "71.2%", status: "SECONDARY" },
-              { name: "Trend Filter (200MA)", acc: "65.8%", status: "TERTIARY" },
-              { name: "Macro Composite", acc: "73.1%", status: "OVERLAY" },
-            ].map(m => (
-              <div key={m.name} style={{ display: "flex", justifyContent: "space-between", padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 3, border: "1px solid rgba(255,255,255,0.05)" }}>
-                <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "#e8e0d0" }}>{m.name}</span>
-                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                  <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#4ade80" }}>{m.acc}</span>
-                  <Badge text={m.status} color="#c9a96e"/>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(201,169,110,0.15)", borderRadius: 6, padding: 20 }}>
-          <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.08em", marginBottom: 14 }}>PROMOTION GATES</div>
-          <div style={{ display: "grid", gap: 8 }}>
-            {[
-              { gate: "Min IC > 0.025", threshold: "0.025", weight: "Hard" },
-              { gate: "ICIR > 0.40", threshold: "0.40", weight: "Hard" },
-              { gate: "Net Sharpe > 0.50", threshold: "0.50", weight: "Hard" },
-              { gate: "No regime IC < -0.01", threshold: "-0.01", weight: "Soft" },
-              { gate: "TC-adjusted capacity > $50M", threshold: "$50M", weight: "Soft" },
-              { gate: "Walk-forward win rate > 60%", threshold: "60%", weight: "Hard" },
-            ].map(g => (
-              <div key={g.gate} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "rgba(232,224,208,0.7)" }}>{g.gate}</span>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "#c9a96e" }}>{g.threshold}</span>
-                  <Badge text={g.weight} color={g.weight === "Hard" ? "#f87171" : "#facc15"}/>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Live FRED Macro Signals — shown only when backend is running */}
-      {macroSignals && (() => {
-        const macroItems = [
-          macroSignals.yield_curve,
-          macroSignals.credit_spreads,
-          macroSignals.volatility,
-          macroSignals.monetary_policy,
-          macroSignals.inflation,
-          macroSignals.financial_conditions,
-        ].filter(Boolean);
-        if (!macroItems.length) return null;
-        return (
-          <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(201,169,110,0.15)", borderRadius: 6, padding: 20, marginTop: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 18, color: "#c9a96e", letterSpacing: "0.08em" }}>LIVE MACRO SIGNALS — FRED</div>
-              <Badge text="LIVE · NO API KEY" color="#4ade80"/>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-              {macroItems.map((m, i) => (
-                <div key={i} style={{ background: "rgba(255,255,255,0.03)", border: `1px solid ${m.color || "#c9a96e"}22`, borderRadius: 4, padding: "12px 14px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.5)" }}>{m.name || m.series_id}</span>
-                    <Badge text={m.signal || "—"} color={m.color || "#c9a96e"}/>
-                  </div>
-                  <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 22, color: m.color || "#c9a96e" }}>{m.value ?? "—"}</div>
-                  <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.4)", marginTop: 4, lineHeight: 1.5 }}>{m.description?.slice(0, 90)}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
-    </div>
+    <section style={{ maxWidth: 960, margin: "56px auto", padding: "24px 28px", border: "1px solid rgba(201,169,110,0.2)", borderRadius: 6, background: "rgba(12,18,28,0.95)" }}>
+      <h2 style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 24, color: "#c9a96e", letterSpacing: "0.06em", marginBottom: 8 }}>{title}</h2>
+      <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, lineHeight: 1.7, color: "rgba(232,224,208,0.62)" }}>{message}</p>
+    </section>
   );
 }
-
-function ExecutionDashboard() {
-  const [filter, setFilter] = useState("ALL");
-  const trades = filter === "ALL" ? EXECUTION_TRADES : EXECUTION_TRADES.filter(t => t.status === filter);
-  const totalTC = EXECUTION_TRADES.reduce((a, t) => a + parseFloat(t.totalTc), 0);
-  const avgSlippage = (EXECUTION_TRADES.reduce((a, t) => a + Math.abs(parseFloat(t.vwapSlippage)), 0) / EXECUTION_TRADES.length * 100).toFixed(4);
-  const fillRate = (EXECUTION_TRADES.filter(t => t.status === "FILLED").length / EXECUTION_TRADES.length * 100).toFixed(1);
-  return (
-    <div style={{ padding: "32px 40px", maxWidth: 1400, margin: "0 auto" }}>
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 28, color: "#c9a96e", letterSpacing: "0.05em", marginBottom: 4 }}>EXECUTION ANALYTICS</h2>
-        <p style={{ fontFamily: "Cormorant Garamond, serif", fontSize: 15, color: "rgba(232,224,208,0.5)", margin: 0 }}>
-          Real-time trade blotter, market impact attribution, and cost decomposition.
-        </p>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 24 }}>
-        <StatCard label="Total Trades" value={EXECUTION_TRADES.length} sub="Today's blotter" color="#c9a96e"/>
-        <StatCard label="Fill Rate" value={`${fillRate}%`} sub="Fully filled" color="#4ade80"/>
-        <StatCard label="Total TC" value={`$${Math.floor(totalTC).toLocaleString()}`} sub="Bps drag" color="#f87171"/>
-        <StatCard label="Avg Slippage" value={`${avgSlippage}%`} sub="vs VWAP" color="#facc15"/>
-        <StatCard label="Notional" value="$84.2M" sub="Today's volume" color="#c084fc"/>
-      </div>
-
-      {/* Algo split */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
-        {[
-          { algo: "VWAP", pct: 42, fills: 17, tc: "4.2 bps", color: "#4ade80" },
-          { algo: "TWAP", pct: 28, fills: 11, tc: "5.1 bps", color: "#c9a96e" },
-          { algo: "IS (Implementation Shortfall)", pct: 30, fills: 12, tc: "3.8 bps", color: "#c084fc" },
-        ].map(a => (
-          <div key={a.algo} style={{ background: "rgba(12,18,28,0.95)", border: `1px solid ${a.color}22`, borderRadius: 6, padding: 16 }}>
-            <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: a.color, letterSpacing: "0.08em", marginBottom: 10 }}>{a.algo}</div>
-            <div style={{ height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 3, marginBottom: 10 }}>
-              <div style={{ width: `${a.pct}%`, height: "100%", background: a.color, borderRadius: 3 }}/>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "rgba(232,224,208,0.5)" }}>{a.pct}% of flow · {a.fills} trades</div>
-              <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "#c9a96e" }}>{a.tc}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Trade Blotter */}
-      <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(201,169,110,0.15)", borderRadius: 6, padding: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 18, color: "#c9a96e", letterSpacing: "0.08em" }}>TRADE BLOTTER</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {["ALL", "FILLED", "PARTIAL", "CANCELLED"].map(f => (
-              <button key={f} onClick={() => setFilter(f)} style={{
-                padding: "4px 12px", borderRadius: 2, border: `1px solid ${filter === f ? "#c9a96e" : "rgba(255,255,255,0.1)"}`,
-                background: filter === f ? "rgba(201,169,110,0.12)" : "transparent",
-                color: filter === f ? "#c9a96e" : "rgba(232,224,208,0.4)",
-                fontFamily: "JetBrains Mono, monospace", fontSize: 10, cursor: "pointer",
-              }}>{f}</button>
-            ))}
-          </div>
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-                {["TIME","ID","TICKER","SIDE","QTY","PRICE","IMPACT","SPREAD","TC ($)","VWAP SLIP","STATUS"].map(h => (
-                  <th key={h} style={{ padding: "6px 12px", textAlign: "left", color: "rgba(232,224,208,0.35)", fontSize: 9, letterSpacing: "0.1em", fontWeight: "normal" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {trades.slice(0, 20).map(t => {
-                const statusCol = { FILLED: "#4ade80", PARTIAL: "#facc15", CANCELLED: "#f87171" }[t.status];
-                const sideCol = t.side === "BUY" ? "#4ade80" : "#f87171";
-                return (
-                  <tr key={t.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}
-                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.02)"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <td style={{ padding: "8px 12px", color: "rgba(232,224,208,0.4)" }}>{t.time}</td>
-                    <td style={{ padding: "8px 12px", color: "rgba(232,224,208,0.5)" }}>{t.id}</td>
-                    <td style={{ padding: "8px 12px", color: "#e8e0d0" }}>{t.ticker}</td>
-                    <td style={{ padding: "8px 12px", color: sideCol }}>{t.side}</td>
-                    <td style={{ padding: "8px 12px", color: "rgba(232,224,208,0.7)" }}>{t.qty.toLocaleString()}</td>
-                    <td style={{ padding: "8px 12px", color: "rgba(232,224,208,0.7)" }}>${t.price}</td>
-                    <td style={{ padding: "8px 12px", color: "#facc15" }}>{t.impact}%</td>
-                    <td style={{ padding: "8px 12px", color: "rgba(232,224,208,0.5)" }}>{t.spread}%</td>
-                    <td style={{ padding: "8px 12px", color: "#f87171" }}>${parseInt(t.totalTc).toLocaleString()}</td>
-                    <td style={{ padding: "8px 12px", color: parseFloat(t.vwapSlippage) < 0 ? "#f87171" : "#4ade80" }}>{(parseFloat(t.vwapSlippage) * 100).toFixed(3)}%</td>
-                    <td style={{ padding: "8px 12px" }}><Badge text={t.status} color={statusCol}/></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PortfolioDashboard({ pnl, benchmark }) {
-  const pnlChange = ((pnl[pnl.length - 1] - pnl[0]) / pnl[0] * 100).toFixed(2);
-  const benchChange = ((benchmark[benchmark.length - 1] - benchmark[0]) / benchmark[0] * 100).toFixed(2);
-  return (
-    <div style={{ padding: "32px 40px", maxWidth: 1400, margin: "0 auto" }}>
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 28, color: "#c9a96e", letterSpacing: "0.05em", marginBottom: 4 }}>PORTFOLIO ANALYTICS</h2>
-        <p style={{ fontFamily: "Cormorant Garamond, serif", fontSize: 15, color: "rgba(232,224,208,0.5)", margin: 0 }}>
-          Live portfolio performance, factor exposure attribution, and risk decomposition.
-        </p>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, marginBottom: 24 }}>
-        <StatCard label="Portfolio Return" value={`+${pnlChange}%`} sub="YTD" color="#4ade80"/>
-        <StatCard label="Benchmark (SPY)" value={`+${benchChange}%`} sub="YTD" color="rgba(232,224,208,0.4)"/>
-        <StatCard label="Alpha" value={`+${(parseFloat(pnlChange) - parseFloat(benchChange)).toFixed(2)}%`} sub="Excess return" color="#c9a96e"/>
-        <StatCard label="Portfolio Sharpe" value="1.42" sub="Annualized" color="#4ade80"/>
-        <StatCard label="Net Exposure" value="18%" sub="Long-short net" color="#c9a96e"/>
-        <StatCard label="Gross Exposure" value="142%" sub="Long + Short" color="#facc15"/>
-      </div>
-
-      {/* Equity Curve */}
-      <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(201,169,110,0.15)", borderRadius: 6, padding: 20, marginBottom: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 18, color: "#c9a96e", letterSpacing: "0.08em" }}>EQUITY CURVE (1Y)</div>
-          <div style={{ display: "flex", gap: 20, fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
-            <span style={{ color: "#c9a96e" }}>— Portfolio (+{pnlChange}%)</span>
-            <span style={{ color: "rgba(255,255,255,0.3)" }}>- - SPY (+{benchChange}%)</span>
-          </div>
-        </div>
-        <EquityCurve pnl={pnl} benchmark={benchmark} height={200}/>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
-        {/* Factor Attribution */}
-        <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(201,169,110,0.15)", borderRadius: 6, padding: 20 }}>
-          <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.08em", marginBottom: 14 }}>FACTOR ATTRIBUTION</div>
-          <div style={{ display: "grid", gap: 8 }}>
-            {[
-              { factor: "Market (Beta)", contrib: "+4.2%", exposure: "0.12", color: "#4ade80" },
-              { factor: "Momentum", contrib: "+3.8%", exposure: "0.31", color: "#4ade80" },
-              { factor: "Value", contrib: "+2.1%", exposure: "0.22", color: "#4ade80" },
-              { factor: "Quality", contrib: "+1.9%", exposure: "0.28", color: "#4ade80" },
-              { factor: "Low Vol", contrib: "+0.8%", exposure: "0.15", color: "#facc15" },
-              { factor: "Idiosyncratic", contrib: "+3.6%", exposure: "—", color: "#c084fc" },
-              { factor: "Transaction Costs", contrib: "-2.4%", exposure: "—", color: "#f87171" },
-            ].map(f => (
-              <div key={f.factor} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "rgba(232,224,208,0.7)" }}>{f.factor}</span>
-                <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-                  <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.4)" }}>β={f.exposure}</span>
-                  <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: f.color, minWidth: 50, textAlign: "right" }}>{f.contrib}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Risk Decomposition */}
-        <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(201,169,110,0.15)", borderRadius: 6, padding: 20 }}>
-          <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.08em", marginBottom: 14 }}>RISK DECOMPOSITION</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
-            <GaugeArc value={1.42} max={3} color="#4ade80" label="Sharpe"/>
-            <GaugeArc value={0.87} max={3} color="#c9a96e" label="Sortino"/>
-            <GaugeArc value={2.31} max={4} color="#c084fc" label="Calmar"/>
-          </div>
-          <div style={{ display: "grid", gap: 8 }}>
-            {[
-              { label: "1D 99% VaR", value: "-$142K", color: "#f87171" },
-              { label: "10D 99% CVaR", value: "-$891K", color: "#f87171" },
-              { label: "Max Drawdown (YTD)", value: "-3.2%", color: "#facc15" },
-              { label: "Volatility (Ann.)", value: "8.4%", color: "#c9a96e" },
-              { label: "Tracking Error", value: "6.1%", color: "#c9a96e" },
-              { label: "Beta to SPY", value: "0.12", color: "#4ade80" },
-            ].map(r => (
-              <div key={r.label} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0" }}>
-                <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.5)" }}>{r.label}</span>
-                <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: r.color }}>{r.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Top Holdings */}
-      <div style={{ background: "rgba(12,18,28,0.95)", border: "1px solid rgba(201,169,110,0.15)", borderRadius: 6, padding: 20 }}>
-        <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.08em", marginBottom: 14 }}>TOP POSITIONS</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
-          {[
-            { ticker: "NVDA", side: "L", weight: "+3.8%", pnl: "+$124K", signal: "MOM+QUAL" },
-            { ticker: "META", side: "L", weight: "+3.2%", pnl: "+$98K", signal: "MOM+NLP" },
-            { ticker: "GOOGL", side: "L", weight: "+2.9%", pnl: "+$76K", signal: "VAL+QUAL" },
-            { ticker: "XOM", side: "S", weight: "-2.1%", pnl: "+$54K", signal: "INV+ST" },
-            { ticker: "INTC", side: "S", weight: "-1.8%", pnl: "+$41K", signal: "MOM+ACCRUAL" },
-          ].map(p => (
-            <div key={p.ticker} style={{
-              background: p.side === "L" ? "rgba(74,222,128,0.05)" : "rgba(248,113,113,0.05)",
-              border: `1px solid ${p.side === "L" ? "rgba(74,222,128,0.2)" : "rgba(248,113,113,0.2)"}`,
-              borderRadius: 4, padding: 14,
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                <span style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 18, color: "#e8e0d0" }}>{p.ticker}</span>
-                <Badge text={p.side === "L" ? "LONG" : "SHORT"} color={p.side === "L" ? "#4ade80" : "#f87171"}/>
-              </div>
-              <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 13, color: "#c9a96e", marginBottom: 2 }}>{p.weight}</div>
-              <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "#4ade80", marginBottom: 6 }}>{p.pnl}</div>
-              <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, color: "rgba(232,224,208,0.35)" }}>{p.signal}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// MAIN APP
-// ═══════════════════════════════════════════════════════════════════════════
-
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@300;400;500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1455,27 +950,16 @@ export default function QuantAlphaFoundry() {
 
   // ── Live data state ──────────────────────────────────────────────────────
   const [liveMetrics, setLiveMetrics]     = useState(null);
-  const [livePnl, setLivePnl]             = useState(null);
-  const [liveBenchmark, setLiveBenchmark] = useState(null);
   const [macroSignals, setMacroSignals]   = useState(null);
   const [agentData, setAgentData]         = useState(null);
-  const [dataSource, setDataSource]       = useState("SIMULATED");
+  const [dataSource, setDataSource]       = useState("OFFLINE");
   const [isComputing, setIsComputing]     = useState(false);
 
-  // Active data: live if available, otherwise simulated fallback
-  const activeMetrics   = liveMetrics   || SIGNAL_METRICS_SIM;
-  const activePnl       = livePnl       || PORTFOLIO_PNL_SIM;
-  const activeBenchmark = liveBenchmark || SPY_BENCHMARK_SIM;
+  // No research values are shown until the backend provides them.
+  const activeMetrics   = liveMetrics   || EMPTY_SIGNAL_METRICS;
 
   // ── Transform fountryhh API responses → frontend metrics shape ─────────────
   function transformSignalList(signals, details) {
-    const CAPACITY = {
-      MOM12_1: "$800M", STREV: "$80M", MOM_1M: "$200M", VAL_BM: "$1.2B",
-      VAL_EP: "$900M", QUAL_ROE: "$1.0B", QUAL_GP: "$1.5B", LOW_VOL: "$2.0B",
-      LOW_BETA: "$1.8B", IDIOVOL: "$600M", EARN_REV: "$400M", SHORT_INT: "$300M",
-      ACCRUAL: "$600M", INV_GROW: "$700M", COMBO_QVM: "$2.0B",
-      ML_GBDT: "$500M", NLP_EARN: "$350M",
-    };
     const metrics = {};
     for (const s of signals) {
       const id = s.signal_id || s.id;
@@ -1485,26 +969,26 @@ export default function QuantAlphaFoundry() {
       const monthlyRets = detail.monthly_returns || [];
       const regimeRaw = detail.regime_ic || {};
 
-      // Walk-forward → add cumPnL + map regime keys
-      let cum = 0;
+      // Summarize observed IC periods; this is not a return backtest.
       const wfYears = wf.map(y => {
-        cum += parseFloat(y.ann_return || 0);
         return {
           year: y.year,
-          ic: (y.ic || 0).toFixed(4),
-          annReturn: String(y.ann_return || 0),
-          cumPnL: cum.toFixed(1),
-          regime: y.regime || "bull",
+          ic: y.ic == null ? "—" : Number(y.ic).toFixed(4),
+          annReturn: y.ann_return == null ? "—" : String(y.ann_return),
+          cumPnL: "—",
+          regime: y.regime || null,
+          nMonths: Number(y.n_months || 0),
         };
       });
 
       // Map fountryhh regime keys → frontend keys (range_bound→range, inflationary→inflate)
+      const asIC = value => value == null ? "—" : Number(value).toFixed(4);
       const regimeIC = {
-        bull:    (regimeRaw.bull    ?? 0).toFixed(4),
-        bear:    (regimeRaw.bear    ?? 0).toFixed(4),
-        crisis:  (regimeRaw.crisis  ?? 0).toFixed(4),
-        range:   (regimeRaw.range_bound   ?? regimeRaw.range   ?? 0).toFixed(4),
-        inflate: (regimeRaw.inflationary  ?? regimeRaw.inflate ?? 0).toFixed(4),
+        bull:    asIC(regimeRaw.bull),
+        bear:    asIC(regimeRaw.bear),
+        crisis:  asIC(regimeRaw.crisis),
+        range:   asIC(regimeRaw.range_bound ?? regimeRaw.range),
+        inflate: asIC(regimeRaw.inflationary ?? regimeRaw.inflate),
       };
 
       const returns = monthlyRets.map((r, i) => ({
@@ -1514,28 +998,26 @@ export default function QuantAlphaFoundry() {
         short: (r.return ?? r.ret ?? 0) * -0.7,
       }));
 
-      const md = s.max_drawdown || 0;
-      const ns = parseFloat(s.net_sharpe || 0);
-      const calmar = md !== 0 ? Math.abs(ns / (md / 100)).toFixed(2) : "0.00";
-
+      const md = s.max_drawdown;
       metrics[id] = {
-        ic:          (s.ic || 0).toFixed(4),
-        icir:        (s.icir || 0).toFixed(3),
-        annualIR:    (s.annual_ir || 0).toFixed(2),
-        grossSharpe: (s.gross_sharpe || 0).toFixed(2),
-        netSharpe:   (s.net_sharpe || 0).toFixed(2),
-        maxDD:       String(md),
-        calmar,
-        turnover:    String(Math.round(s.turnover || 0)),
-        winRate:     (s.win_rate || 50).toFixed(1),
-        hitRate:     (s.win_rate || 50).toFixed(1),
-        capacity:    CAPACITY[id] || "$500M",
-        tcCost:      (s.tc_cost || 0).toFixed(3),
+        ic:          s.ic == null ? "—" : Number(s.ic).toFixed(4),
+        icir:        s.icir == null ? "—" : Number(s.icir).toFixed(3),
+        annualIR:    s.annual_ir == null ? "—" : Number(s.annual_ir).toFixed(2),
+        grossSharpe: s.gross_sharpe == null ? "—" : Number(s.gross_sharpe).toFixed(2),
+        netSharpe:   s.net_sharpe == null ? "—" : Number(s.net_sharpe).toFixed(2),
+        maxDD:       md == null ? "—" : String(md),
+        calmar:      "—",
+        turnover:    s.turnover == null ? "—" : String(Math.round(s.turnover)),
+        winRate:     s.pct_positive_ic == null ? "—" : Number(s.pct_positive_ic).toFixed(1),
+        hitRate:     "—",
+        capacity:    "—",
+        tcCost:      s.tc_cost == null ? "—" : Number(s.tc_cost).toFixed(3),
         regimeIC,
         wfYears,
         decay:       decay.map(d => ({ lag: d.lag, ic: d.ic })),
         returns,
         promoted:    Boolean(s.promoted),
+        nPeriods:    Number(s.n_periods || 0),
       };
     }
     return metrics;
@@ -1558,7 +1040,7 @@ export default function QuantAlphaFoundry() {
         }
         if (!healthRes || !healthRes.ok) return;
         const health = await healthRes.json();
-        if (!health.data_loaded) { setIsComputing(true); return; }
+        if (!health.data_loaded) { setIsComputing(false); setDataSource("DATA UNAVAILABLE"); return; }
 
         // Fetch signal list + detail for all signals in parallel
         const sigRes = await fetch(`${API_BASE}/api/signals`);
@@ -1579,16 +1061,19 @@ export default function QuantAlphaFoundry() {
           if (v.status === "fulfilled" && v.value) details[id] = v.value;
         });
 
-        // Merge simulated fallback for signals not in backend (ML_GBDT, NLP_EARN)
-        const liveIds = new Set(signalList.map(s => s.signal_id || s.id));
         const transformed = transformSignalList(signalList, details);
-        const merged = { ...SIGNAL_METRICS_SIM };
-        Object.assign(merged, transformed);
-        // Keep sim data for signals not returned by backend
-        for (const id of liveIds) merged[id] = transformed[id];
+        // Missing backend signals stay explicitly unavailable; never fill the gaps with demo metrics.
+        for (const signal of SIGNALS) {
+          if (!transformed[signal.id]) transformed[signal.id] = {
+            ic: "—", icir: "—", annualIR: "—", grossSharpe: "—", netSharpe: "—",
+            maxDD: "—", calmar: "—", turnover: "—", winRate: "—", hitRate: "—",
+            capacity: "—", tcCost: "—", regimeIC: { bull: "—", bear: "—", crisis: "—", range: "—", inflate: "—" },
+            wfYears: [], decay: [], returns: [], promoted: false, nPeriods: 0,
+          };
+        }
 
-        setLiveMetrics(merged);
-        setDataSource("LIVE");
+        setLiveMetrics(transformed);
+        setDataSource("CONNECTED");
         setIsComputing(false);
 
         // FRED macro signals (free, no key)
@@ -1596,17 +1081,6 @@ export default function QuantAlphaFoundry() {
         if (macroRes.ok) {
           const macroData = await macroRes.json();
           if (macroData && typeof macroData === "object") setMacroSignals(macroData);
-        }
-
-        // Portfolio
-        const portRes = await fetch(`${API_BASE}/api/portfolio/performance`);
-        if (portRes.ok) {
-          const port = await portRes.json();
-          const curve = port.equity_curve;
-          if (curve?.portfolio?.length > 10) {
-            setLivePnl(curve.portfolio.map(v => v * 100));
-            setLiveBenchmark(curve.benchmark.map(v => v * 100));
-          }
         }
 
         // Agents
@@ -1625,7 +1099,7 @@ export default function QuantAlphaFoundry() {
           });
         } catch { /* agents not ready */ }
       } catch {
-        // Backend not running — silently stay on simulated data
+        // Keep research unavailable when the backend cannot be reached.
       }
     }
 
@@ -1678,7 +1152,7 @@ export default function QuantAlphaFoundry() {
             </div>
             <div>
               <div style={{ fontFamily: "Bebas Neue, sans-serif", fontSize: 16, color: "#c9a96e", letterSpacing: "0.2em" }}>FOUNTRY</div>
-              <div className="nav-brand-sub" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 8, color: "rgba(201,169,110,0.45)", letterSpacing: "0.2em" }}>INSTITUTIONAL RESEARCH PLATFORM</div>
+              <div className="nav-brand-sub" style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 8, color: "rgba(201,169,110,0.45)", letterSpacing: "0.2em" }}>EXPERIMENTAL QUANT RESEARCH</div>
             </div>
           </div>
 
@@ -1708,9 +1182,9 @@ export default function QuantAlphaFoundry() {
           {/* Right: data source + live ticker */}
           <div className="nav-ticker" style={{ display: "flex", alignItems: "center", gap: 20, flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {dataSource === "LIVE" && <span className="live-dot"/>}
+              {dataSource === "CONNECTED" && <span className="live-dot"/>}
               <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 9, letterSpacing: "0.12em",
-                color: dataSource === "LIVE" ? "#4ade80" : "rgba(201,169,110,0.45)" }}>
+                color: dataSource === "CONNECTED" ? "#4ade80" : "rgba(201,169,110,0.45)" }}>
                 {isComputing ? "COMPUTING..." : dataSource}
               </span>
             </div>
@@ -1746,11 +1220,11 @@ export default function QuantAlphaFoundry() {
       {/* MAIN CONTENT */}
       <main style={{ position: "relative", zIndex: 1 }}>
         <div className="fade-in" key={activeView}>
-          {activeView === "FOUNTRY"     && <FoundryOverview onSelectSignal={handleSelectSignal} metrics={activeMetrics}/>}
-          {activeView === "SIGNAL LAB"  && <SignalLab signal={selectedSignal} metrics={activeMetrics}/>}
-          {activeView === "STRESS TEST" && <StressTest metrics={activeMetrics} macroSignals={macroSignals}/>}
-          {activeView === "EXECUTION"   && <ExecutionDashboard/>}
-          {activeView === "PORTFOLIO"   && <PortfolioDashboard pnl={activePnl} benchmark={activeBenchmark}/>}
+          {activeView === "FOUNTRY"     && (dataSource === "CONNECTED" ? <FoundryOverview onSelectSignal={handleSelectSignal} metrics={activeMetrics}/> : <UnavailablePanel title="Research results unavailable" message="Connect the backend to view measured signals. Synthetic demo performance has been removed."/>)}
+          {activeView === "SIGNAL LAB"  && (dataSource === "CONNECTED" ? <SignalLab signal={selectedSignal} metrics={activeMetrics}/> : <UnavailablePanel title="Signal research unavailable" message="Connect the backend to view results computed from market data."/>)}
+          {activeView === "STRESS TEST" && <UnavailablePanel title="Regime stress results unavailable" message="No date-aligned historical regime-conditioned returns are implemented yet."/>}
+          {activeView === "EXECUTION"   && <UnavailablePanel title="Execution analytics unavailable" message="This view has no verified broker fill and transaction cost feed connected."/>}
+          {activeView === "PORTFOLIO"   && <UnavailablePanel title="Portfolio performance unavailable" message="No validated point-in-time, after-cost portfolio backtest is available yet."/>}
           {activeView === "AGENTS"      && <AgentsDashboard agentData={agentData} apiBase={API_BASE}/>}
         </div>
       </main>
@@ -1761,7 +1235,7 @@ export default function QuantAlphaFoundry() {
             FOUNTRY v2.0
           </div>
           <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "rgba(232,224,208,0.2)" }}>
-            IR = IC x sqrt(N)
+            Experimental research · no validated live strategy
           </div>
         </div>
       </footer>

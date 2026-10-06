@@ -204,34 +204,6 @@ class FREDLoader:
         return self._data
 
 
-# ── Synthetic fallback (when FRED is unreachable) ───────────────────────────
-
-def _synthetic_fred_series(series_id: str, n: int = 252 * 5) -> pd.Series:
-    """Generate realistic synthetic macro series for fallback."""
-    np.random.seed(abs(hash(series_id)) % 2**31)
-    dates = pd.bdate_range(end=datetime.today(), periods=n)
-
-    defaults = {
-        "DGS10": (4.2, 0.8, 0.02),
-        "DGS2":  (4.5, 0.7, 0.025),
-        "T10Y2Y": (-0.3, 0.5, 0.01),
-        "T10Y3M": (-0.5, 0.6, 0.015),
-        "BAMLH0A0HYM2": (4.2, 1.5, 0.03),
-        "BAMLC0A0CM":   (1.2, 0.4, 0.015),
-        "TEDRATE": (0.25, 0.15, 0.01),
-        "VIXCLS":  (18.5, 8.0, 0.04),
-        "FEDFUNDS":(5.25, 0.5, 0.005),
-        "DFII10":  (1.8, 0.6, 0.015),
-        "UNRATE":  (3.9, 0.3, 0.005),
-        "CPIAUCSL":(310, 8, 0.003),
-        "T5YIE":   (2.3, 0.4, 0.01),
-        "NFCI":    (-0.2, 0.3, 0.008),
-    }
-    mean, std, vol = defaults.get(series_id, (5.0, 1.0, 0.02))
-    s = mean + std * np.cumsum(np.random.normal(0, vol, n))
-    return pd.Series(s, index=dates, name=series_id)
-
-
 # ── MACRO SIGNAL ENGINE ──────────────────────────────────────────────────────
 
 class MacroSignalEngine:
@@ -246,16 +218,21 @@ class MacroSignalEngine:
         self._data = fred_loader.data
 
     def _get(self, sid: str) -> pd.Series:
-        """Get series, falling back to synthetic if unavailable."""
+        """Get an observed FRED series or an empty series when unavailable."""
         s = self._data.get(sid)
         if s is None or len(s) == 0:
-            return _synthetic_fred_series(sid)
+            return pd.Series(dtype=float, name=sid)
         return s
 
     def _latest(self, sid: str) -> float:
         """Get the most recent value of a series."""
         s = self._get(sid)
         return float(s.dropna().iloc[-1]) if len(s) > 0 else np.nan
+
+    @staticmethod
+    def _unavailable(series_id: str, name: str) -> dict:
+        return {"status": "unavailable", "series_id": series_id, "name": name,
+                "value": None, "signal": "UNAVAILABLE", "history": {"dates": [], "values": []}}
 
     def _zscore(self, s: pd.Series, window: int = 252) -> pd.Series:
         """Rolling z-score for normalization."""
@@ -282,11 +259,10 @@ class MacroSignalEngine:
             raw = spread.dropna()
 
         if raw.empty:
-            return {"value": -0.3, "zscore": -1.2, "signal": "INVERTED", "color": "#f87171",
-                    "description": "Yield curve inverted — historical recession signal"}
+            return self._unavailable("T10Y2Y", "Yield Curve (10Y-2Y Spread)")
 
         current = float(raw.iloc[-1])
-        z       = float(self._zscore(raw, 252).iloc[-1]) if len(raw) > 252 else 0.0
+        z       = float(self._zscore(raw, 252).iloc[-1]) if len(raw) > 252 else None
 
         # Signal classification
         if current < -0.5:
@@ -323,11 +299,13 @@ class MacroSignalEngine:
         """
         hy_oas = self._get("BAMLH0A0HYM2").dropna()
         ig_oas = self._get("BAMLC0A0CM").dropna()
+        if hy_oas.empty or ig_oas.empty:
+            return self._unavailable("BAMLH0A0HYM2", "Credit Spreads")
 
-        hy_val = float(hy_oas.iloc[-1]) if len(hy_oas) > 0 else 4.5
-        ig_val = float(ig_oas.iloc[-1]) if len(ig_oas) > 0 else 1.2
+        hy_val = float(hy_oas.iloc[-1])
+        ig_val = float(ig_oas.iloc[-1])
 
-        hy_z = float(self._zscore(hy_oas, 252).iloc[-1]) if len(hy_oas) > 252 else 0.0
+        hy_z = float(self._zscore(hy_oas, 252).iloc[-1]) if len(hy_oas) > 252 else None
 
         if hy_val > 700:
             label, color = "CRISIS WIDE",  "#c084fc"
@@ -362,11 +340,13 @@ class MacroSignalEngine:
         VIX level and 30-day change as fear gauge and regime signal.
         """
         vix = self._get("VIXCLS").dropna()
+        if vix.empty:
+            return self._unavailable("VIXCLS", "VIX Volatility Index")
 
-        vix_val = float(vix.iloc[-1]) if len(vix) > 0 else 18.5
+        vix_val = float(vix.iloc[-1])
         vix_1m  = float(vix.iloc[-22]) if len(vix) > 22 else vix_val
         vix_chg = round((vix_val / vix_1m - 1) * 100, 1)
-        vix_z   = float(self._zscore(vix, 252).iloc[-1]) if len(vix) > 252 else 0.0
+        vix_z   = float(self._zscore(vix, 252).iloc[-1]) if len(vix) > 252 else None
 
         if vix_val > 40:
             label, color = "EXTREME FEAR",  "#c084fc"
@@ -403,9 +383,11 @@ class MacroSignalEngine:
         """
         ffr   = self._get("FEDFUNDS").dropna()
         real  = self._get("DFII10").dropna()
+        if ffr.empty or real.empty:
+            return self._unavailable("FEDFUNDS", "Monetary Policy")
 
-        ffr_val  = float(ffr.iloc[-1])  if len(ffr) > 0  else 5.25
-        real_val = float(real.iloc[-1]) if len(real) > 0 else 1.8
+        ffr_val  = float(ffr.iloc[-1])
+        real_val = float(real.iloc[-1])
         ffr_3m   = float(ffr.iloc[-3])  if len(ffr) > 3  else ffr_val
         ffr_chg  = ffr_val - ffr_3m
 
@@ -439,13 +421,15 @@ class MacroSignalEngine:
         unrate  = self._get("UNRATE").dropna()
         claims  = self._get("ICSA").dropna()
         payems  = self._get("PAYEMS").dropna()
+        if unrate.empty or claims.empty or len(payems) < 4:
+            return self._unavailable("UNRATE", "Labor Market / Economic Cycle")
 
-        ur_val   = float(unrate.iloc[-1])  if len(unrate) > 0  else 3.9
+        ur_val   = float(unrate.iloc[-1])
         ur_3m    = float(unrate.iloc[-4])  if len(unrate) > 4  else ur_val
         ur_trend = ur_val - ur_3m
 
-        claims_val  = float(claims.iloc[-1])   if len(claims) > 0  else 220000
-        pay_mom     = float(payems.pct_change(3).iloc[-1] * 100) if len(payems) > 3 else 0.3
+        claims_val  = float(claims.iloc[-1])
+        pay_mom     = float(payems.pct_change(3).iloc[-1] * 100)
 
         if ur_trend > 0.4:
             label, color = "DETERIORATING", "#f87171"
@@ -478,9 +462,11 @@ class MacroSignalEngine:
         """
         cpi      = self._get("CPIAUCSL").dropna()
         breakevn = self._get("T5YIE").dropna()
+        if len(cpi) <= 252 or breakevn.empty:
+            return self._unavailable("CPIAUCSL", "Inflation Regime")
 
-        cpi_yoy = float(self._pct_change_yoy(cpi).dropna().iloc[-1]) if len(cpi) > 252 else 3.2
-        be_val  = float(breakevn.iloc[-1]) if len(breakevn) > 0 else 2.3
+        cpi_yoy = float(self._pct_change_yoy(cpi).dropna().iloc[-1])
+        be_val  = float(breakevn.iloc[-1])
 
         if cpi_yoy > 6:
             label, color = "HOT INFLATION",   "#c084fc"
@@ -515,9 +501,11 @@ class MacroSignalEngine:
         Negative = loose (risk-on), Positive = tight (risk-off).
         """
         nfci = self._get("NFCI").dropna()
+        if nfci.empty:
+            return self._unavailable("NFCI", "Financial Conditions (NFCI)")
 
-        val = float(nfci.iloc[-1]) if len(nfci) > 0 else -0.2
-        z   = float(self._zscore(nfci, 52).iloc[-1]) if len(nfci) > 52 else 0.0
+        val = float(nfci.iloc[-1])
+        z   = float(self._zscore(nfci, 52).iloc[-1]) if len(nfci) > 52 else None
 
         if val > 0.5:
             label, color = "TIGHT",        "#f87171"
@@ -562,6 +550,23 @@ class MacroSignalEngine:
             "financial_conditions":self.financial_conditions_signal(),
         }
 
+        available = {
+            name: data for name, data in signals.items()
+            if data.get("status") != "unavailable" and data.get("signal") != "UNAVAILABLE"
+        }
+        if not available:
+            return {
+                "status": "unavailable",
+                "reason": "No macro series are available from FRED or cache.",
+                "composite_score": None,
+                "regime": "UNAVAILABLE",
+                "color": "#f87171",
+                "signals": [],
+                "individual": signals,
+                "timestamp": datetime.now().isoformat(),
+                "data_live": False,
+            }
+
         IMPACT_SCORES = {
             "BULLISH": +15, "STEEP": +10, "LOOSE": +12, "VERY LOOSE": +20,
             "ACCOMMODATIVE": +10, "STRENGTHENING": +15, "ON TARGET": +5,
@@ -579,7 +584,7 @@ class MacroSignalEngine:
 
         score = 0
         details = []
-        for sig_name, sig_data in signals.items():
+        for sig_name, sig_data in available.items():
             signal_label = sig_data.get("signal", "NEUTRAL")
             sig_score = IMPACT_SCORES.get(signal_label, 0)
             score += sig_score
@@ -608,6 +613,7 @@ class MacroSignalEngine:
             regime, color = "CRISIS",         "#c084fc"
 
         return {
+            "status": "available" if len(available) == len(signals) else "partial",
             "composite_score": score,
             "regime":          regime,
             "color":           color,
@@ -615,6 +621,8 @@ class MacroSignalEngine:
             "individual":      signals,
             "timestamp":       datetime.now().isoformat(),
             "data_live":       self.fred._loaded,
+            "available_signal_count": len(available),
+            "total_signal_count": len(signals),
         }
 
     def all_signals(self) -> dict:
