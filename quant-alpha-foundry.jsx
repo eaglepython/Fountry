@@ -946,7 +946,6 @@ function AgentsDashboard({ agentData, apiBase }) {
 export default function QuantAlphaFoundry() {
   const [activeView, setActiveView] = useState("FOUNTRY");
   const [selectedSignal, setSelectedSignal] = useState(SIGNALS[0]);
-  const [tick, setTick] = useState(0);
 
   // ── Live data state ──────────────────────────────────────────────────────
   const [liveMetrics, setLiveMetrics]     = useState(null);
@@ -1108,18 +1107,11 @@ export default function QuantAlphaFoundry() {
     return () => clearInterval(poll);
   }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => setTick(t => t + 1), 3000);
-    return () => clearInterval(interval);
-  }, []);
-
   const handleSelectSignal = useCallback((signal) => {
     setSelectedSignal(signal);
     setActiveView("SIGNAL LAB");
   }, []);
 
-  const livePrice = (100 + Math.sin(tick * 0.3) * 2 + tick * 0.05).toFixed(2);
-  const tickerPnl = (12.4 + Math.sin(tick * 0.2) * 0.3).toFixed(2);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
@@ -1179,7 +1171,7 @@ export default function QuantAlphaFoundry() {
           {/* Spacer */}
           <div style={{ flex: 1 }}/>
 
-          {/* Right: data source + live ticker */}
+          {/* Right: data source + unavailable market metrics */}
           <div className="nav-ticker" style={{ display: "flex", alignItems: "center", gap: 20, flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               {dataSource === "CONNECTED" && <span className="live-dot"/>}
@@ -1189,10 +1181,10 @@ export default function QuantAlphaFoundry() {
               </span>
             </div>
             <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "rgba(232,224,208,0.5)" }}>
-              SPX <span style={{ color: "#c9a96e" }}>{livePrice}</span>
+              SPX <span style={{ color: "rgba(232,224,208,0.35)" }}>—</span>
             </div>
             <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
-              P&L <span style={{ color: "#4ade80" }}>+{tickerPnl}%</span>
+              P&amp;L <span style={{ color: "rgba(232,224,208,0.35)" }}>—</span>
             </div>
           </div>
 
