@@ -31,6 +31,7 @@ UNIVERSE = [
 ]
 
 BENCHMARK = "SPY"
+MARKET_INDEX = "^GSPC"
 
 class DataLoader:
     def __init__(self):
@@ -73,7 +74,7 @@ class DataLoader:
                 return
 
         all_closes = {}
-        for ticker in self.universe:
+        for ticker in [*self.universe, MARKET_INDEX]:
             try:
                 t = yf.Ticker(ticker)
                 hist = t.history(period="5y", auto_adjust=True)
@@ -182,6 +183,9 @@ class DataLoader:
                     "price": round(latest, 2),
                     "change": round(chg * 100, 2),
                     "volume": None,
+                    "as_of": px.index[-1].strftime("%Y-%m-%d"),
+                    "source": "yfinance",
+                    "price_type": "daily_close",
                 }
         return snapshot
 
@@ -205,7 +209,7 @@ class DataLoader:
     @property
     def equity_universe(self) -> List[str]:
         """Non-ETF tickers with price data."""
-        etfs = {"SPY","QQQ","IWM","AGG","TLT","GLD","VTV","VUG","VBR","VBK"}
+        etfs = {"SPY","QQQ","IWM","AGG","TLT","GLD","VTV","VUG","VBR","VBK", MARKET_INDEX}
         return [t for t in self.universe if t not in etfs and t in self.prices]
 
     def get_returns_matrix(self, tickers: Optional[List[str]] = None, lookback: int = 252) -> pd.DataFrame:

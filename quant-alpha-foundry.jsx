@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API_BASE = (import.meta.env?.VITE_API_URL || (import.meta.env?.PROD ? "" : "http://localhost:8000"))
+const API_BASE = (import.meta.env?.VITE_API_URL || (import.meta.env?.PROD ? "https://fountry-api.onrender.com" : "http://localhost:8000"))
   .trim()
   .replace(/\/+$/, "");
 
@@ -951,6 +951,7 @@ export default function QuantAlphaFoundry() {
   const [liveMetrics, setLiveMetrics]     = useState(null);
   const [macroSignals, setMacroSignals]   = useState(null);
   const [agentData, setAgentData]         = useState(null);
+  const [marketQuote, setMarketQuote]     = useState(null);
   const [dataSource, setDataSource]       = useState("OFFLINE");
   const [isComputing, setIsComputing]     = useState(false);
 
@@ -1039,6 +1040,16 @@ export default function QuantAlphaFoundry() {
         }
         if (!healthRes || !healthRes.ok) return;
         const health = await healthRes.json();
+        try {
+          const marketRes = await fetch(`${API_BASE}/api/market/live`, { signal: AbortSignal.timeout(10000) });
+          if (marketRes.ok) {
+            const snapshot = await marketRes.json();
+            const quote = snapshot["^GSPC"]
+              ? { ...snapshot["^GSPC"], ticker: "SPX" }
+              : snapshot.SPY ? { ...snapshot.SPY, ticker: "SPY" } : null;
+            setMarketQuote(quote);
+          }
+        } catch { /* Keep the last observed quote, if any. */ }
         if (!health.data_loaded) { setIsComputing(false); setDataSource("DATA UNAVAILABLE"); return; }
 
         // Fetch signal list + detail for all signals in parallel
@@ -1171,7 +1182,7 @@ export default function QuantAlphaFoundry() {
           {/* Spacer */}
           <div style={{ flex: 1 }}/>
 
-          {/* Right: data source + unavailable market metrics */}
+          {/* Right: data source + observed market close */}
           <div className="nav-ticker" style={{ display: "flex", alignItems: "center", gap: 20, flexShrink: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               {dataSource === "CONNECTED" && <span className="live-dot"/>}
@@ -1181,7 +1192,12 @@ export default function QuantAlphaFoundry() {
               </span>
             </div>
             <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "rgba(232,224,208,0.5)" }}>
-              SPX <span style={{ color: "rgba(232,224,208,0.35)" }}>—</span>
+              {marketQuote?.ticker || "SPX"} <span
+                title={marketQuote?.as_of ? `Latest reported daily close · ${marketQuote.as_of} · ${marketQuote.source || "market data"}` : "Market data unavailable"}
+                style={{ color: marketQuote ? "#c9a96e" : "rgba(232,224,208,0.35)" }}
+              >{Number.isFinite(marketQuote?.price)
+                ? `${marketQuote.ticker === "SPX" ? marketQuote.price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : `$${marketQuote.price.toFixed(2)}`}${Number.isFinite(marketQuote.change) ? ` (${marketQuote.change > 0 ? "+" : ""}${marketQuote.change.toFixed(2)}%)` : ""}`
+                : "—"}</span>
             </div>
             <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
               P&amp;L <span style={{ color: "rgba(232,224,208,0.35)" }}>—</span>
